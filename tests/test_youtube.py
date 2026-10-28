@@ -1,9 +1,12 @@
+import json
+import stat
+
 import pytest
 from googleapiclient.errors import HttpError
 
 from ipod2playlist.library import Song
 from ipod2playlist.matching import Candidate
-from ipod2playlist.youtube import QuotaExceeded, YouTubeService
+from ipod2playlist.youtube import QuotaExceeded, YouTubeService, _reasons, _save_token
 from fakes import FakeYouTube
 
 
@@ -62,3 +65,26 @@ def test_other_http_error_propagates_unchanged():
         service.add("missing", "abc")
     assert not isinstance(caught.value, QuotaExceeded)
     assert caught.value.status_code == 404
+
+
+def test_quota_detected_when_body_also_has_details_block():
+    # FakeYouTube's body has both "errors" and "details"; the library only exposes "details"
+    error = FakeYouTube(fail_reason="quotaExceeded").http_error()
+    assert "quotaExceeded" not in [d.get("reason") for d in error.error_details]
+    assert "quotaExceeded" in _reasons(error)
+
+
+def test_reasons_tolerates_non_json_body():
+    error = FakeYouTube().http_error()
+    error.content = b"<html>bad gateway</html>"
+    error.error_details = ""
+    assert _reasons(error) == set()
+
+
+def test_save_token_is_owner_only_even_over_existing_file(tmp_path):
+    path = tmp_path / "token.json"
+    path.write_text("old")
+    path.chmod(0o644)
+    _save_token(path, json.dumps({"a": 1}))
+    assert json.loads(path.read_text()) == {"a": 1}
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600

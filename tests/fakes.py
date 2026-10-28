@@ -80,7 +80,13 @@ class FakeYouTube:
 
     def http_error(self):
         status = 404 if self.fail_reason == "notFound" else 403
-        body = {"error": {"code": status, "message": "boom", "errors": [{"reason": self.fail_reason}]}}
+        body = {"error": {
+            "code": status,
+            "message": "boom",
+            "errors": [{"reason": self.fail_reason}],
+            # Google also sends this block; the library reads it INSTEAD of "errors" for error_details
+            "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "RATE_LIMIT_EXCEEDED"}],
+        }}
         resp = SimpleNamespace(status=status, reason="Error")
         return HttpError(resp, json.dumps(body).encode())
 

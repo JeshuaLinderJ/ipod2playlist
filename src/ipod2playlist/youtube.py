@@ -1,7 +1,10 @@
 """YouTube: search for videos and build a playlist, through a googleapiclient client."""
 import html
+import json
+import os
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -61,11 +64,24 @@ def _execute(request) -> dict:
     try:
         return request.execute()
     except HttpError as error:
-        # error_details is the "errors" list from Google's error body, e.g. [{"reason": "quotaExceeded"}]
-        details = error.error_details if isinstance(error.error_details, list) else []
-        if any(d.get("reason") in QUOTA_REASONS for d in details):
+        if QUOTA_REASONS & _reasons(error):
             raise QuotaExceeded(error.reason) from error
         raise
+
+
+def _reasons(error: HttpError) -> set[str]:
+    """Machine-readable reasons from the error body's "errors" list and from error_details.
+
+    HttpError.error_details holds only the first of detail/details/errors/message, so a body
+    that also has a "details" block would hide the "errors" reasons; read both.
+    """
+    try:
+        entries = json.loads(error.content)["error"]["errors"]
+    except (ValueError, KeyError, TypeError):
+        entries = []
+    if isinstance(error.error_details, list):
+        entries = [*entries, *error.error_details]
+    return {e["reason"] for e in entries if isinstance(e, dict) and "reason" in e}
 
 
 def make_client(secrets_file: Path, token_file: Path):
@@ -74,8 +90,18 @@ def make_client(secrets_file: Path, token_file: Path):
     if token_file.exists():
         creds = Credentials.from_authorized_user_file(str(token_file), SCOPES)
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-    elif not creds or not creds.valid:
+        try:
+            creds.refresh(Request())
+        except RefreshError:  # token revoked or expired: log in again
+            creds = None
+    if not creds or not creds.valid:
         creds = InstalledAppFlow.from_client_secrets_file(str(secrets_file), SCOPES).run_local_server(port=0)
-    token_file.write_text(creds.to_json())
+    _save_token(token_file, creds.to_json())
     return build("youtube", "v3", credentials=creds)
+
+
+def _save_token(path: Path, text: str) -> None:
+    """Write the token readable by the owner only; it holds a long-lived refresh token."""
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        f.write(text)
+    os.chmod(path, 0o600)  # tighten a file that already existed
