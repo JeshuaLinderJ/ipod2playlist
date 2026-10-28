@@ -11,16 +11,13 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from ipod2playlist.errors import PlaylistGone, QuotaExceeded
 from ipod2playlist.library import Song
 from ipod2playlist.matching import Candidate
 
 SCOPES = ["https://www.googleapis.com/auth/youtube"]
 SEARCH_LIMIT = 5
 QUOTA_REASONS = {"quotaExceeded", "dailyLimitExceeded"}
-
-
-class QuotaExceeded(Exception):
-    """YouTube's daily API quota is used up; resume tomorrow."""
 
 
 class YouTubeService:
@@ -56,7 +53,24 @@ class YouTubeService:
                 "resourceId": {"kind": "youtube#video", "videoId": item_id},
             }
         }
-        _execute(self.client.playlistItems().insert(part="snippet", body=body))
+        try:
+            _execute(self.client.playlistItems().insert(part="snippet", body=body))
+        except HttpError as error:
+            # Only playlistNotFound means the playlist is gone; a 404 videoNotFound is one bad song.
+            if "playlistNotFound" in _reasons(error):
+                raise PlaylistGone(self.name) from error
+            raise
+
+    def playlist_exists(self, playlist_id: str) -> bool:
+        """Ask for the playlist by id (1 quota unit); an unknown id is a 404 or an empty list."""
+        request = self.client.playlists().list(part="id", id=playlist_id, maxResults=1)
+        try:
+            response = _execute(request)
+        except HttpError as error:
+            if "playlistNotFound" in _reasons(error):
+                return False
+            raise
+        return bool(response.get("items"))
 
 
 def _execute(request) -> dict:

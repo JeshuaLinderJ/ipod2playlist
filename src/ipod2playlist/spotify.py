@@ -2,10 +2,12 @@
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
+from ipod2playlist.errors import PlaylistGone
 from ipod2playlist.library import Song
 from ipod2playlist.matching import Candidate
 
-SCOPE = "playlist-modify-private playlist-modify-public"
+# user-library-read is needed by playlist_exists (me/library/contains)
+SCOPE = "playlist-modify-private playlist-modify-public user-library-read"
 SEARCH_LIMIT = 5
 
 
@@ -26,13 +28,27 @@ class SpotifyService:
                 artist=", ".join(artist["name"] for artist in item["artists"]),
             )
             for item in items
+            if item
         ]
 
     def create_playlist(self, name: str, public: bool) -> str:
         return self.client.current_user_playlist_create(name, public=public)["id"]
 
     def add(self, playlist_id: str, item_id: str) -> None:
-        self.client.playlist_add_items(playlist_id, [item_id])
+        try:
+            self.client.playlist_add_items(playlist_id, [item_id])
+        except spotipy.exceptions.SpotifyException as error:
+            if error.http_status == 404:
+                raise PlaylistGone(self.name) from error
+            raise
+
+    def playlist_exists(self, playlist_id: str) -> bool:
+        # Spotify has no "delete playlist": deleting it in the app unfollows it, and the owner can
+        # still add to it, so a 404 on add almost never happens. Ask whether we still follow it.
+        # spotipy 2.26 maps this to GET me/library/contains (the February 2026 replacement for
+        # playlists/{id}/followers/contains). Only an explicit [False] means gone; anything
+        # unexpected counts as "exists", which is the v1.5 behaviour.
+        return self.client.current_user_saved_items([f"spotify:playlist:{playlist_id}"]) != [False]
 
     def _tracks(self, query: str) -> list[dict]:
         return self.client.search(q=query, limit=SEARCH_LIMIT, type="track")["tracks"]["items"]

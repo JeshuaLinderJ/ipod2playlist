@@ -6,6 +6,10 @@ from googleapiclient.errors import HttpError
 
 from ipod2playlist.library import Song
 from ipod2playlist.matching import Candidate
+from google.auth.exceptions import RefreshError
+
+from ipod2playlist import youtube
+from ipod2playlist.errors import PlaylistGone
 from ipod2playlist.youtube import QuotaExceeded, YouTubeService, _reasons, _save_token
 from fakes import FakeYouTube
 
@@ -88,3 +92,129 @@ def test_save_token_is_owner_only_even_over_existing_file(tmp_path):
     _save_token(path, json.dumps({"a": 1}))
     assert json.loads(path.read_text()) == {"a": 1}
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_add_to_deleted_playlist_raises_playlist_gone():
+    fake = FakeYouTube()
+    service = YouTubeService(fake)
+    playlist_id = service.create_playlist("Mix", public=False)
+    fake.delete_playlist(playlist_id)
+    with pytest.raises(PlaylistGone) as caught:
+        service.add(playlist_id, "abc")
+    assert caught.value.service == "youtube"
+    assert not isinstance(caught.value, HttpError)
+
+
+def test_add_video_not_found_stays_http_error():
+    fake = FakeYouTube()
+    service = YouTubeService(fake)
+    playlist_id = service.create_playlist("Mix", public=False)
+    fake.fail_after, fake.fail_reason = fake.calls, "videoNotFound"
+    with pytest.raises(HttpError) as caught:
+        service.add(playlist_id, "abc")
+    assert not isinstance(caught.value, PlaylistGone)
+
+
+def test_playlist_exists_true_then_false_after_delete():
+    fake = FakeYouTube()
+    service = YouTubeService(fake)
+    playlist_id = service.create_playlist("Mix", public=False)
+    assert service.playlist_exists(playlist_id) is True
+    fake.delete_playlist(playlist_id)
+    assert service.playlist_exists(playlist_id) is False
+
+
+def test_playlist_exists_false_for_empty_items():
+    class Stub:
+        def playlists(self):
+            return self
+
+        def list(self, **kw):
+            return self
+
+        def execute(self):
+            return {"items": []}
+
+    assert YouTubeService(Stub()).playlist_exists("x") is False
+
+
+def test_playlist_exists_quota_error_becomes_quota_exceeded():
+    with pytest.raises(QuotaExceeded):
+        YouTubeService(FakeYouTube(fail_after=0)).playlist_exists("x")
+
+
+def test_playlist_exists_other_http_error_propagates():
+    fake = FakeYouTube(fail_after=0, fail_reason="forbidden")
+    with pytest.raises(HttpError):
+        YouTubeService(fake).playlist_exists("x")
+
+
+def test_search_typo_keyword_fails_like_the_real_client():
+    with pytest.raises(TypeError):
+        FakeYouTube().search().list(part="snippet", q="a", type="video", maxresult=5)
+
+
+class FakeCreds:
+    def __init__(self, valid=True, expired=False, refresh_token="r", refresh_error=None, text="{}"):
+        self.valid, self.expired, self.refresh_token = valid, expired, refresh_token
+        self.refresh_error, self.text = refresh_error, text
+
+    def refresh(self, request):
+        if self.refresh_error:
+            raise self.refresh_error
+        self.valid, self.expired = True, False
+
+    def to_json(self):
+        return self.text
+
+
+@pytest.fixture
+def client_env(monkeypatch, tmp_path):
+    env = type("Env", (), {})()
+    env.logins = []
+    env.cached = None
+    env.new_creds = FakeCreds(text='{"new": true}')
+    env.token = tmp_path / "token.json"
+    sentinel = object()
+    env.sentinel = sentinel
+
+    class Flow:
+        def run_local_server(self, port):
+            env.logins.append(port)
+            return env.new_creds
+
+    monkeypatch.setattr(youtube.Credentials, "from_authorized_user_file", lambda path, scopes: env.cached)
+    monkeypatch.setattr(youtube, "Request", lambda: None)
+    monkeypatch.setattr(youtube.InstalledAppFlow, "from_client_secrets_file", lambda path, scopes: Flow())
+    monkeypatch.setattr(youtube, "build", lambda *args, **kw: sentinel)
+    return env
+
+
+def test_make_client_valid_cached_token_needs_no_login(client_env):
+    client_env.cached = FakeCreds(text='{"cached": true}')
+    client_env.token.write_text("old")
+    assert youtube.make_client(None, client_env.token) is client_env.sentinel
+    assert client_env.logins == []
+    assert client_env.token.read_text() == '{"cached": true}'
+    assert stat.S_IMODE(client_env.token.stat().st_mode) == 0o600
+
+
+def test_make_client_refreshes_expired_token_without_login(client_env):
+    client_env.cached = FakeCreds(valid=False, expired=True)
+    client_env.token.write_text("old")
+    youtube.make_client(None, client_env.token)
+    assert client_env.logins == []
+
+
+def test_make_client_logs_in_once_when_refresh_fails(client_env):
+    client_env.cached = FakeCreds(valid=False, expired=True, refresh_error=RefreshError("revoked"))
+    client_env.token.write_text("old")
+    youtube.make_client(None, client_env.token)
+    assert client_env.logins == [0]
+    assert client_env.token.read_text() == '{"new": true}'
+
+
+def test_make_client_logs_in_when_no_token_file(client_env):
+    youtube.make_client(None, client_env.token)
+    assert client_env.logins == [0]
+    assert client_env.token.read_text() == '{"new": true}'
