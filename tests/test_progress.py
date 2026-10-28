@@ -130,3 +130,11 @@ def test_reset_service_of_unknown_service_is_a_no_op(tmp_path):
     progress.reset_service("youtube")
 
     assert progress.playlist_id("spotify") == "id"
+
+
+def test_services_lists_blocks(tmp_path):
+    progress = Progress(tmp_path / "progress.json")
+    assert progress.services() == []
+    progress.record("spotify", "a|b", "added")
+    progress.set_playlist_id("youtube", "pl1")
+    assert progress.services() == ["spotify", "youtube"]

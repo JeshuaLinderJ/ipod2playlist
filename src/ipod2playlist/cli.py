@@ -57,6 +57,15 @@ def build_parser() -> argparse.ArgumentParser:
     youtube_cmd.add_argument("--token", type=Path, default=Path("youtube_token.json"),
                              help="where the YouTube login is saved (default: youtube_token.json)")
 
+    doctor_cmd = add_command("doctor", "check the setup and say what to do next (no API calls)", commands.run_doctor)
+    add_progress(doctor_cmd)
+    doctor_cmd.add_argument("--client-secrets", type=Path,
+                            default=Path(os.environ.get("YOUTUBE_CLIENT_SECRETS", "client_secrets.json")),
+                            help="Google OAuth client file (default: client_secrets.json, "
+                                 "or $YOUTUBE_CLIENT_SECRETS)")
+    doctor_cmd.add_argument("--token", type=Path, default=Path("youtube_token.json"),
+                            help="where the YouTube login is saved (default: youtube_token.json)")
+
     missing = add_command("missing", "write the songs a service could not find to a TSV (no API calls)",
                           commands.run_missing)
     add_progress(missing)

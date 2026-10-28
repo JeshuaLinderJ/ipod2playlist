@@ -1,7 +1,8 @@
 """Thin command handlers; the decisions live in playlist.py and the other feature modules."""
+import os
 from pathlib import Path
 
-from ipod2playlist import library, messages, playlist, spotify, youtube
+from ipod2playlist import doctor, library, messages, playlist, spotify, youtube
 from ipod2playlist.progress import Progress
 from ipod2playlist.scan import scan
 from ipod2playlist.spotify import SpotifyService
@@ -84,3 +85,10 @@ def run_missing(args) -> None:
     out = Path(f"{args.service}_missing.tsv")
     library.write_tsv(songs, out)
     print(f"Wrote {len(songs)} missing songs to {out}")
+
+
+def run_doctor(args) -> None:
+    # VOLUMES is passed explicitly: a default argument is bound at import time, so tests could not patch it.
+    for line in doctor.report(args.songs, args.progress, args.client_secrets, args.token, os.environ,
+                              volumes=doctor.VOLUMES):
+        print(line)

@@ -20,6 +20,9 @@ class Progress:
     def _service(self, service: str) -> dict:
         return self._data["services"].setdefault(service, {"playlist_id": None, "songs": {}})
 
+    def services(self) -> list[str]:
+        return list(self._data["services"])
+
     def playlist_id(self, service: str) -> str | None:
         return self._data["services"].get(service, {}).get("playlist_id")
 
