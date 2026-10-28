@@ -1,0 +1,15 @@
+.DS_Store
+__pycache__/
+.venv/
+.pytest_cache/
+.env
+client_secrets.json
+*token*.json
+.cache*
+songs.json
+songs.tsv
+progress.json
+*_missing.tsv
+.superpowers/
+ipod_song_list.*
+spotify_missing_songs.txt

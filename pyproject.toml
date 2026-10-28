@@ -1,0 +1,32 @@
+[project]
+name = "ipod2playlist"
+version = "0.1.0"
+description = "Turn an iPod Classic's music into Spotify/YouTube playlists"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "google-api-python-client>=2.201.0",
+    "google-auth-oauthlib>=1.5.0",
+    "mutagen>=1.48.1",
+    "python-dotenv>=1.2.4",
+    "rapidfuzz>=3.14.5",
+    "spotipy>=2.26.0",
+]
+
+[project.scripts]
+ipod2playlist = "ipod2playlist.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ipod2playlist"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
