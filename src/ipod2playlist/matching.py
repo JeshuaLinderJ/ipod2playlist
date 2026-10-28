@@ -7,10 +7,14 @@ from rapidfuzz import fuzz
 
 from ipod2playlist.library import Song
 
-_BRACKETED = re.compile(r"\([^)]*\)|\[[^\]]*\]")
+# Bracketed text is dropped only when it is noise; "(Live ...)" or "(Karaoke ...)" stays.
+_NOISE_WORDS = r"remaster(ed)?|feat|ft|featuring|official|video|audio|lyrics?|hd|explicit"
+_BRACKETED_NOISE = re.compile(rf"\([^)]*\b({_NOISE_WORDS})\b[^)]*\)|\[[^\]]*\b({_NOISE_WORDS})\b[^\]]*\]")
 _REMASTER_SUFFIX = re.compile(r"\s-\s[^-]*remaster.*$")
 _FEATURING = re.compile(r"\b(feat|ft|featuring)\b.*$")
 _PUNCTUATION = re.compile(r"[^\w\s]|_")
+_CHANNEL_SUFFIX = re.compile(r"(\s*(vevo|topic|official))+$")
+_DIGITS = re.compile(r"\d+")
 
 
 @dataclass(frozen=True)
@@ -24,7 +28,7 @@ def normalize(text: str) -> str:
     """Lowercase, accent-free text without bracketed/remaster/feat. noise or punctuation."""
     text = unicodedata.normalize("NFKD", text.casefold())
     text = "".join(c for c in text if not unicodedata.combining(c))
-    text = _BRACKETED.sub(" ", text)
+    text = _BRACKETED_NOISE.sub(" ", text)
     text = _REMASTER_SUFFIX.sub("", text)
     text = _FEATURING.sub("", text)
     text = _PUNCTUATION.sub(" ", text)
@@ -32,20 +36,25 @@ def normalize(text: str) -> str:
 
 
 def score(song: Song, candidate: Candidate) -> float:
-    """0..100: 60% title similarity + 40% artist similarity.
+    """0..100. The artist is a gate, the title is the score.
 
-    Spotify gives clean fields; YouTube gives "Artist - Song (Official Video)" and a
-    channel like "ArtistVEVO" / "Artist - Topic". So the title may also match as
-    "<artist> <title>", and the artist matches if it appears inside the channel name.
+    A wrong song by the right artist or a cover by someone else must not pass, so
+    the artist has to match first: the channel name (minus "VEVO"/"Topic"/"Official")
+    is close to it, or it appears as whole words in the title ("Artist - Song" on a
+    label channel). Then the score is the title similarity, with a leading "Artist -"
+    removed from YouTube titles. Titles with different numbers ("Song 2" vs "Song 3")
+    score 0.
     """
     title, artist = normalize(song.title), normalize(song.artist)
-    cand_title, cand_artist = normalize(candidate.title), normalize(candidate.artist)
-    title_sim = max(
-        fuzz.ratio(title, cand_title),
-        fuzz.ratio(f"{artist} {title}", cand_title),
-    )
-    artist_sim = fuzz.partial_ratio(artist, cand_artist)
-    return 0.6 * title_sim + 0.4 * artist_sim
+    cand_title = normalize(candidate.title)
+    channel = _CHANNEL_SUFFIX.sub("", normalize(candidate.artist))
+    in_title = bool(artist) and re.search(rf"\b{re.escape(artist)}\b", cand_title)
+    if fuzz.ratio(artist, channel) < 85 and not in_title:
+        return 0
+    cand_title = cand_title.removeprefix(artist + " ")
+    if set(_DIGITS.findall(title)) != set(_DIGITS.findall(cand_title)):
+        return 0
+    return fuzz.ratio(title, cand_title)
 
 
 def best_match(

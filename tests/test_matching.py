@@ -61,4 +61,32 @@ def test_best_match_of_no_candidates_is_none():
 
 
 def test_normalize_strips_noise():
-    assert normalize("Jóga (Live) [Bonus] - 2009 Remaster feat. X!") == "joga"
+    assert normalize("Jóga (Live) (Official Video) - 2009 Remaster feat. X!") == "joga live"
+
+
+def test_cover_of_same_title_by_another_artist_is_no_match():
+    assert best_match(song("Hurt", "Nine Inch Nails"), [cand("Hurt", "Johnny Cash")]) is None
+
+
+def test_artist_name_inside_a_longer_channel_name_is_no_match():
+    channel = cand("One", "Beautiful Musicals 2U2")
+    assert best_match(song("One", "U2"), [channel]) is None
+
+
+def test_karaoke_version_is_no_match():
+    karaoke = cand("Karma Police (Karaoke Version)", "Radiohead Karaoke")
+    assert best_match(song("Karma Police", "Radiohead"), [karaoke]) is None
+
+
+def test_live_version_is_no_match():
+    live = cand("Karma Police (Live at Glastonbury)", "Radiohead")
+    assert best_match(song("Karma Police", "Radiohead"), [live]) is None
+
+
+def test_different_number_in_title_is_no_match():
+    assert best_match(song("Song 2", "Blur"), [cand("Song 3", "Blur")]) is None
+
+
+def test_label_channel_matches_when_artist_is_in_the_title():
+    label = cand("Radiohead - Karma Police (Official Audio)", "XL Recordings")
+    assert best_match(song("Karma Police", "Radiohead"), [label])
