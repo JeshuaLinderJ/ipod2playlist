@@ -15,6 +15,7 @@ _FEATURING = re.compile(r"\b(feat|ft|featuring)\b.*$")
 _PUNCTUATION = re.compile(r"[^\w\s]|_")
 _CHANNEL_SUFFIX = re.compile(r"(\s*(vevo|topic|official))+$")
 _DIGITS = re.compile(r"\d+")
+_VERSION_WORDS = re.compile(r"\b(live|karaoke|cover|acoustic|instrumental|remix|demo)\b")
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,7 @@ def score(song: Song, candidate: Candidate) -> float:
     is close to it, or it appears as whole words in the title ("Artist - Song" on a
     label channel). Then the score is the title similarity, with a leading "Artist -"
     removed from YouTube titles. Titles with different numbers ("Song 2" vs "Song 3")
-    score 0.
+    score 0, and so do titles with different version words (live, karaoke, remix...).
     """
     title, artist = normalize(song.title), normalize(song.artist)
     cand_title = normalize(candidate.title)
@@ -53,6 +54,11 @@ def score(song: Song, candidate: Candidate) -> float:
         return 0
     cand_title = cand_title.removeprefix(artist + " ")
     if set(_DIGITS.findall(title)) != set(_DIGITS.findall(cand_title)):
+        return 0
+    # Version tags are read from the raw titles: normalize drops "(Official Live Video)".
+    if set(_VERSION_WORDS.findall(song.title.casefold())) != set(
+        _VERSION_WORDS.findall(candidate.title.casefold())
+    ):
         return 0
     return fuzz.ratio(title, cand_title)
 

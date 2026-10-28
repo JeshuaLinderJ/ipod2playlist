@@ -90,3 +90,18 @@ def test_different_number_in_title_is_no_match():
 def test_label_channel_matches_when_artist_is_in_the_title():
     label = cand("Radiohead - Karma Police (Official Audio)", "XL Recordings")
     assert best_match(song("Karma Police", "Radiohead"), [label])
+
+
+def test_live_tag_on_candidate_only_is_no_match():
+    live = cand("Karma Police (Live)", "Radiohead")
+    assert best_match(song("Karma Police", "Radiohead"), [live]) is None
+
+
+def test_official_live_video_is_no_match_for_studio_song():
+    live = cand("Radiohead - Karma Police (Official Live Video)", "Radiohead")
+    assert best_match(song("Karma Police", "Radiohead"), [live]) is None
+
+
+def test_live_song_matches_its_live_version():
+    live = cand("Karma Police - Live", "Radiohead")
+    assert best_match(song("Karma Police (Live)", "Radiohead"), [live])
