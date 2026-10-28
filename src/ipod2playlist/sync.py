@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from ipod2playlist.errors import PlaylistGone, QuotaExceeded
 from ipod2playlist.library import UNKNOWN_ARTIST, Song
-from ipod2playlist.matching import best_match
+from ipod2playlist.matching import best_match, near_miss
 from ipod2playlist.progress import Progress
 
 # A revoked login or a dropped network fails every song; stop and let the CLI explain, not print N lines.
@@ -72,7 +72,8 @@ def sync(songs: list[Song], service, progress: Progress, playlist_name: str,
             continue
 
         try:
-            match = best_match(song, service.search(song))
+            candidates = service.search(song)
+            match = best_match(song, candidates)
             if match is not None and not dry_run:
                 service.add(playlist_id, match.id)
         except (QuotaExceeded, PlaylistGone):  # these end the run; every other error is per-song
@@ -93,7 +94,11 @@ def sync(songs: list[Song], service, progress: Progress, playlist_name: str,
 
         if match is None:
             result.missing += 1
-            print(f"- missing: {song.artist} - {song.title}")
+            close = near_miss(song, candidates)
+            note = " (close match saved for review)" if close else ""
+            print(f"- missing: {song.artist} - {song.title}{note}")
+            if close and not dry_run:  # remembered only; a human approves it later
+                progress.record_maybe(name, song.key, *close)
         elif dry_run:
             result.added += 1
             print(f"would add: {song.artist} - {song.title}  ->  {match.title} by {match.artist}")

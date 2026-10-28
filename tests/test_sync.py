@@ -317,3 +317,30 @@ def test_untagged_songs_are_not_searchable_or_counted(tmp_path):
     assert searchable(songs()[0])
     assert search_count(untagged, progress, "youtube") == 0
     assert search_count(untagged + songs(), progress, "youtube") == 4
+
+
+def test_near_miss_is_remembered_in_a_real_run_but_never_added(tmp_path, capsys):
+    video = {"id": {"videoId": "vid1"}, "snippet": {"title": "Oasis - Dont Look Back", "channelTitle": "Oasis"}}
+    fake = FakeYouTube(catalog=[video])
+    song = Song(title="Don't Look Back in Anger", artist="Oasis", album="", path="/a.mp3")
+    progress = Progress(tmp_path / "progress.json")
+
+    result = sync([song], YouTubeService(fake), progress, "Mix")
+
+    assert result.missing == 1 and result.added == 0
+    saved = progress.maybe("youtube", song.key)
+    assert (saved["id"], saved["title"], saved["artist"]) == ("vid1", "Oasis - Dont Look Back", "Oasis")
+    assert 60 <= saved["score"] < 80
+    assert fake.created[0]["items"] == []
+    assert "(close match saved for review)" in capsys.readouterr().out
+
+
+def test_dry_run_mentions_near_miss_but_records_nothing(tmp_path, capsys):
+    video = {"id": {"videoId": "vid1"}, "snippet": {"title": "Oasis - Dont Look Back", "channelTitle": "Oasis"}}
+    song = Song(title="Don't Look Back in Anger", artist="Oasis", album="", path="/a.mp3")
+    path = tmp_path / "progress.json"
+
+    sync([song], YouTubeService(FakeYouTube(catalog=[video])), Progress(path), "Mix", dry_run=True)
+
+    assert "(close match saved for review)" in capsys.readouterr().out
+    assert not path.exists()

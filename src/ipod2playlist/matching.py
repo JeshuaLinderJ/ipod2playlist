@@ -10,6 +10,7 @@ from ipod2playlist.library import Song
 
 ARTIST_GATE = 85  # minimum artist/channel similarity (0..100)
 MATCH_THRESHOLD = 80  # minimum title similarity to accept a candidate
+REVIEW_FLOOR = 60  # minimum score to remember a rejected candidate for human review
 
 # Bracketed text is dropped only when it is noise; "(Live ...)" or "(Karaoke ...)" stays.
 _NOISE_WORDS = r"remaster(ed)?|feat|ft|featuring|official|video|audio|lyrics?|hd|explicit|4k"
@@ -91,4 +92,20 @@ def best_match(
     best = max(candidates, key=lambda c: score(song, c), default=None)
     if best is not None and score(song, best) >= threshold:
         return best
+    return None
+
+
+def near_miss(song: Song, candidates: list[Candidate]) -> tuple[Candidate, float] | None:
+    """The best candidate scoring in [REVIEW_FLOOR, MATCH_THRESHOLD), else None.
+
+    score() is 0 whenever the artist, number or version gate fails, so every near miss
+    already has the right artist and no live/karaoke/remix difference. Only the title is
+    a little too different. This is only for remembering; it never adds anything.
+    """
+    best = max(candidates, key=lambda c: score(song, c), default=None)
+    if best is None:
+        return None
+    best_score = score(song, best)
+    if REVIEW_FLOOR <= best_score < MATCH_THRESHOLD:
+        return best, best_score
     return None

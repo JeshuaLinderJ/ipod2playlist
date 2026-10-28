@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 
+from ipod2playlist.matching import Candidate
+
 VALID_STATUSES = {"added", "missing"}
 
 
@@ -35,7 +37,25 @@ class Progress:
     def record(self, service: str, song_key: str, status: str) -> None:
         if status not in VALID_STATUSES:
             raise ValueError(f"invalid status {status!r}; expected one of {sorted(VALID_STATUSES)}")
-        self._service(service)["songs"][song_key] = status
+        block = self._service(service)
+        block["songs"][song_key] = status
+        if status == "added":
+            block.get("maybe", {}).pop(song_key, None)
+
+    def record_maybe(self, service: str, song_key: str, candidate: Candidate, score: float) -> None:
+        """Remember a close match for review. The "maybe" key only appears here, so files
+        without near misses keep the exact v1.5 shape; v1.5 code ignores it."""
+        block = self._service(service)
+        block.setdefault("maybe", {})[song_key] = {
+            "id": candidate.id, "title": candidate.title,
+            "artist": candidate.artist, "score": round(score, 1),
+        }
+
+    def maybe(self, service: str, song_key: str) -> dict | None:
+        return self._data["services"].get(service, {}).get("maybe", {}).get(song_key)
+
+    def clear_maybe(self, service: str, song_key: str) -> None:
+        self._data["services"].get(service, {}).get("maybe", {}).pop(song_key, None)
 
     def keys_with_status(self, service: str, status: str) -> list[str]:
         songs = self._data["services"].get(service, {}).get("songs", {})

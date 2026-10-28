@@ -167,3 +167,24 @@ def test_partial_title_overlap_is_no_match():
 
 def test_titles_that_normalize_to_nothing_are_no_match():
     assert best_match(song("(1999)", "Prince"), [cand("(1984)", "Prince")]) is None
+
+
+def test_near_miss_cases():
+    from ipod2playlist.matching import MATCH_THRESHOLD, REVIEW_FLOOR, near_miss, score
+
+    wonder = song("Wonderwall", "Oasis")
+    anger = song("Don't Look Back in Anger", "Oasis")
+    close = cand("Dont Look Back", "Oasis")
+    assert REVIEW_FLOOR <= score(anger, close) < MATCH_THRESHOLD  # guards the fixture
+    assert near_miss(anger, [close]) == (close, score(anger, close))
+    assert near_miss(wonder, [cand("Wonderwall (Remastered Demo Take)", "Oasis")]) is None  # version gate
+    assert near_miss(wonder, [cand("Wonderwall", "Oasis")]) is None  # perfect match is not a near miss
+    assert near_miss(wonder, []) is None
+
+
+def test_cover_by_another_artist_is_never_a_near_miss():
+    from ipod2playlist.matching import near_miss
+
+    anger = song("Don't Look Back in Anger", "Oasis")
+    assert near_miss(anger, [cand("Dont Look Back", "Some Cover Band")]) is None
+    assert near_miss(anger, [cand("Dont Look Back (Live)", "Oasis")]) is None

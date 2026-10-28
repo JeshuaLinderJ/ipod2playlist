@@ -138,3 +138,44 @@ def test_services_lists_blocks(tmp_path):
     progress.record("spotify", "a|b", "added")
     progress.set_playlist_id("youtube", "pl1")
     assert progress.services() == ["spotify", "youtube"]
+
+
+V15 = {"version": 1, "services": {"spotify": {"playlist_id": "pl1", "songs": {"a|b": "added", "c|d": "missing"}}}}
+
+
+def test_v15_file_round_trips_without_a_maybe_key(tmp_path):
+    path = tmp_path / "progress.json"
+    path.write_text(json.dumps(V15))
+    progress = Progress(path)
+    progress.record("spotify", "e|f", "missing")
+    progress.save()
+    expected = json.loads(json.dumps(V15))
+    expected["services"]["spotify"]["songs"]["e|f"] = "missing"
+    assert json.loads(path.read_text()) == expected
+
+
+def test_file_with_maybe_is_still_valid_for_v15_logic(tmp_path):
+    from ipod2playlist.matching import Candidate
+
+    path = tmp_path / "progress.json"
+    path.write_text(json.dumps(V15))
+    progress = Progress(path)
+    progress.record_maybe("spotify", "c|d", Candidate("id1", "T", "A"), 73.66)
+    progress.save()
+    data = json.loads(path.read_text())
+    block = data["services"]["spotify"]
+    assert data["version"] == 1
+    assert block["playlist_id"] is None or isinstance(block["playlist_id"], str)
+    assert set(block["songs"].values()) <= {"added", "missing"}
+    assert Progress(path).maybe("spotify", "c|d") == {"id": "id1", "title": "T", "artist": "A", "score": 73.7}
+
+
+def test_added_clears_maybe_and_missing_block_is_tolerated(tmp_path):
+    from ipod2playlist.matching import Candidate
+
+    progress = Progress(tmp_path / "progress.json")
+    assert progress.maybe("spotify", "a|b") is None
+    progress.clear_maybe("spotify", "a|b")  # no block at all: no error
+    progress.record_maybe("spotify", "a|b", Candidate("i", "T", "A"), 70)
+    progress.record("spotify", "a|b", "added")
+    assert progress.maybe("spotify", "a|b") is None
