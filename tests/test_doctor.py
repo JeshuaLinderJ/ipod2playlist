@@ -178,3 +178,31 @@ def test_cli_doctor_makes_no_calls_and_writes_nothing(tmp_path, monkeypatch, cap
     output = capsys.readouterr().out
     assert f"!!   No iPod found in {setup.volumes}." in output
     assert "Next:" in output
+
+
+def test_next_step_continues_interrupted_spotify_run(tmp_path):
+    setup = Setup(tmp_path)
+    library.save_songs([song("a"), song("b")], setup.songs)
+    progress = Progress(setup.progress)
+    progress.record("spotify", song("a").key, "added")
+    progress.save()
+    assert setup.next_line(FULL_ENV) == "Next: ipod2playlist spotify (it continues where it stopped)."
+
+
+def test_next_step_fixes_youtube_client_file_when_songs_pending(tmp_path):
+    setup = Setup(tmp_path)
+    library.save_songs([song("a")], setup.songs)
+    progress = Progress(setup.progress)
+    progress.record("spotify", song("a").key, "missing")
+    progress.save()
+    expected = "Next: fix the YouTube client file above (README step 3)."
+    assert setup.next_line(FULL_ENV) == expected  # file absent
+    setup.secrets.write_text('{"web": {}}')
+    assert setup.next_line(FULL_ENV) == expected  # wrong kind
+
+
+def test_malformed_service_block_is_reported_as_corrupt(tmp_path):
+    setup = Setup(tmp_path)
+    for text in ('{"services": {"spotify": null}}', '{"services": {"spotify": {"songs": []}}}'):
+        setup.progress.write_text(text)
+        assert f"!!   Progress file {setup.progress} is corrupt; fix or delete it." in setup.report()

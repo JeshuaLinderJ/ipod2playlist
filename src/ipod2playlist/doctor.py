@@ -65,16 +65,16 @@ def _youtube_lines(secrets_path: Path, token_path: Path) -> tuple[list[str], boo
 
 
 def _progress_lines(progress_path: Path) -> tuple[list[str], Progress | None]:
+    lines = []
     try:
         progress = Progress(progress_path)  # reading only; save() is never called
-    except (OSError, ValueError):
+        for service in progress.services():
+            added = len(progress.keys_with_status(service, "added"))
+            missing = len(progress.keys_with_status(service, "missing"))
+            playlist = "saved" if progress.playlist_id(service) else "not created yet"
+            lines.append(f"ok   {service}: {added} added, {missing} missing, playlist {playlist}")
+    except (OSError, ValueError, AttributeError):  # AttributeError: a hand-edited service block of the wrong shape
         return [f"!!   Progress file {progress_path} is corrupt; fix or delete it."], None
-    lines = []
-    for service in progress.services():
-        added = len(progress.keys_with_status(service, "added"))
-        missing = len(progress.keys_with_status(service, "missing"))
-        playlist = "saved" if progress.playlist_id(service) else "not created yet"
-        lines.append(f"ok   {service}: {added} added, {missing} missing, playlist {playlist}")
     return lines, progress
 
 
@@ -129,8 +129,12 @@ def report(songs_path: Path, progress_path: Path, secrets_path: Path, token_path
         lines.append("Next: fix the Spotify settings above (README step 2).")
     elif "spotify" not in services:
         lines.append("Next: ipod2playlist spotify --dry-run  (then ipod2playlist spotify)")
+    elif sync.pending(songs, progress, "spotify"):  # an interrupted run; Spotify comes first in the flow
+        lines.append("Next: ipod2playlist spotify (it continues where it stopped).")
     elif youtube_pending and client_ok:
         lines.append("Next: ipod2playlist youtube --only-spotify-missing")
+    elif youtube_pending:
+        lines.append("Next: fix the YouTube client file above (README step 3).")
     else:
         lines.append("Next: all done. ipod2playlist review --service spotify shows what is still missing.")
     return lines
