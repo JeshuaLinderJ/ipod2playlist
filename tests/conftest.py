@@ -17,14 +17,17 @@ IPOD_FILES = [
     # The .wav fixture cannot take easy tags, so it is also untagged.
     ("iPod_Control/Music/F05/UVWX.wav", None),
 ]
-# Junk that is not a song: AppleDouble resource fork and the iTunes database.
-IPOD_JUNK = ["iPod_Control/Music/F00/._ABCD.mp3", "iPod_Control/iTunes/iTunesDB"]
+# Junk that is not a song: the iTunes database.
+IPOD_JUNK = ["iPod_Control/iTunes/iTunesDB"]
+# AppleDouble file: a valid tagged mp3, so only the "._" name filter can exclude it.
+APPLEDOUBLE = "iPod_Control/Music/F00/._ABCD.mp3"
+APPLEDOUBLE_TITLE = "APPLEDOUBLE SHOULD NOT APPEAR"
 
 
 @pytest.fixture
 def fake_ipod(tmp_path) -> Path:
     """A disk-mode iPod Classic tree in tmp_path; returns the iPod root."""
-    for rel, tags in IPOD_FILES:
+    for rel, tags in IPOD_FILES + [(APPLEDOUBLE, {"title": APPLEDOUBLE_TITLE, "artist": "X", "album": "X"})]:
         dest = tmp_path / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(FIXTURES / f"silence{dest.suffix}", dest)

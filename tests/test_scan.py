@@ -1,3 +1,4 @@
+from conftest import APPLEDOUBLE_TITLE
 from ipod2playlist.scan import read_song, scan
 
 
@@ -32,8 +33,10 @@ def test_untagged_files_fall_back(fake_ipod):
 
 
 def test_junk_files_are_skipped(fake_ipod):
-    names = {s.path.rsplit("/", 1)[-1] for s in scan(fake_ipod)}
+    songs = scan(fake_ipod)
+    names = {s.path.rsplit("/", 1)[-1] for s in songs}
     assert "._ABCD.mp3" not in names
+    assert APPLEDOUBLE_TITLE not in {s.title for s in songs}
     assert "iTunesDB" not in names
 
 
