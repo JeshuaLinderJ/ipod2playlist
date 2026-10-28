@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from ipod2playlist import library, spotify, youtube
 from ipod2playlist.progress import Progress
@@ -62,7 +62,18 @@ def _load_progress(path: Path) -> Progress:
         raise SystemExit(f"Progress file {path} is corrupt; fix or delete it.")
 
 
+def _load_songs(path: Path) -> list[library.Song]:
+    try:
+        return library.load_songs(path)
+    except FileNotFoundError:
+        raise SystemExit(f"{path} not found; run `ipod2playlist scan <ipod path>` first.")
+    except (json.JSONDecodeError, TypeError):
+        raise SystemExit(f"{path} is not a valid song list; re-run scan.")
+
+
 def _scan(args) -> None:
+    if not args.root.is_dir():
+        raise SystemExit(f"{args.root} is not a directory (is the iPod mounted?)")
     found = scan(args.root)
     songs = library.dedupe(found)
     library.save_songs(songs, args.songs)
@@ -72,7 +83,7 @@ def _scan(args) -> None:
 
 
 def _playlist(args) -> None:
-    songs = library.load_songs(args.songs)
+    songs = _load_songs(args.songs)
     progress = _load_progress(args.progress)
     if getattr(args, "only_spotify_missing", False):
         spotify_missing = set(progress.keys_with_status("spotify", "missing"))
@@ -89,14 +100,14 @@ def _playlist(args) -> None:
 def _missing(args) -> None:
     progress = _load_progress(args.progress)
     keys = set(progress.keys_with_status(args.service, "missing"))
-    songs = [song for song in library.load_songs(args.songs) if song.key in keys]
+    songs = [song for song in _load_songs(args.songs) if song.key in keys]
     out = Path(f"{args.service}_missing.tsv")
     library.write_tsv(songs, out)
     print(f"Wrote {len(songs)} missing songs to {out}")
 
 
 def main(argv=None) -> None:
-    load_dotenv()
+    load_dotenv(find_dotenv(usecwd=True))  # the user's cwd, not the installed package's directory
     args = build_parser().parse_args(argv)
     commands = {"scan": _scan, "spotify": _playlist, "youtube": _playlist, "missing": _missing}
     try:

@@ -125,3 +125,31 @@ def test_corrupt_progress_file_exits_cleanly(fake_ipod, work, monkeypatch):
         cli.main(["spotify"])
 
     assert stopped.value.code == "Progress file progress.json is corrupt; fix or delete it."
+
+
+def test_missing_songs_file_exits_with_hint(work, monkeypatch):
+    use_services(monkeypatch, spotify=SpotifyService(FakeSpotify()))
+
+    for command in (["spotify"], ["missing", "--service", "spotify"]):
+        with pytest.raises(SystemExit) as stopped:
+            cli.main(command)
+        assert stopped.value.code == "songs.json not found; run `ipod2playlist scan <ipod path>` first."
+
+
+def test_invalid_songs_file_exits_with_hint(work):
+    (work / "songs.json").write_text("{not json")
+
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["missing", "--service", "spotify"])
+
+    assert stopped.value.code == "songs.json is not a valid song list; re-run scan."
+
+
+def test_scan_of_missing_directory_leaves_songs_untouched(work):
+    (work / "songs.json").write_text("[1]")
+
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["scan", str(work / "no-ipod")])
+
+    assert "is not a directory (is the iPod mounted?)" in stopped.value.code
+    assert (work / "songs.json").read_text() == "[1]"
