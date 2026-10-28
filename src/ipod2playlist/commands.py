@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 
-from ipod2playlist import doctor, library, messages, playlist, spotify, youtube
+from ipod2playlist import doctor, library, messages, playlist, review, spotify, youtube
 from ipod2playlist.progress import Progress
 from ipod2playlist.scan import scan
 from ipod2playlist.spotify import SpotifyService
@@ -92,3 +92,18 @@ def run_doctor(args) -> None:
     for line in doctor.report(args.songs, args.progress, args.client_secrets, args.token, os.environ,
                               volumes=doctor.VOLUMES):
         print(line)
+
+
+def run_review(args) -> None:
+    songs = load_songs(args.songs)
+    progress = load_progress(args.progress)
+    missing, guessed = review.write_reports(songs, progress, args.service, Path("."))
+    print(review.report_message(args.service, missing, guessed))
+
+
+def run_apply_review(args) -> None:
+    args.file = args.file or Path(f"{args.service}_review.csv")  # the default depends on --service
+    review.check_file(args.file, args.service)  # first, so a missing file never triggers a login
+    progress = load_progress(args.progress)
+    service = build_service(args.service, args)
+    print(review.apply_summary(review.apply_file(args.file, service, progress)))

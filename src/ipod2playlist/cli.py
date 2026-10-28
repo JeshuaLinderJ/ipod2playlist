@@ -70,6 +70,23 @@ def build_parser() -> argparse.ArgumentParser:
                           commands.run_missing)
     add_progress(missing)
     missing.add_argument("--service", required=True, choices=["spotify", "youtube"])
+
+    review_cmd = add_command("review", "write a report of missing songs to check by hand (no API calls)",
+                             commands.run_review)
+    add_progress(review_cmd)
+    review_cmd.add_argument("--service", required=True, choices=["spotify", "youtube"])
+
+    apply_cmd = subparsers.add_parser("apply-review", help="add the close matches you marked y in the review csv")
+    apply_cmd.set_defaults(run=commands.run_apply_review)
+    apply_cmd.add_argument("--service", required=True, choices=["spotify", "youtube"])
+    apply_cmd.add_argument("--file", type=Path, default=None, help="review file (default: <service>_review.csv)")
+    add_progress(apply_cmd)
+    apply_cmd.add_argument("--client-secrets", type=Path,
+                           default=Path(os.environ.get("YOUTUBE_CLIENT_SECRETS", "client_secrets.json")),
+                           help="Google OAuth client file (default: client_secrets.json, "
+                                "or $YOUTUBE_CLIENT_SECRETS)")
+    apply_cmd.add_argument("--token", type=Path, default=Path("youtube_token.json"),
+                           help="where the YouTube login is saved (default: youtube_token.json)")
     return parser
 
 
