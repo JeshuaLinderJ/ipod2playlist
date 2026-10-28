@@ -1,5 +1,6 @@
 """Fuzzy matching: decide whether a search result is really the iPod song."""
 import re
+from collections import Counter
 import unicodedata
 from dataclasses import dataclass
 
@@ -7,9 +8,14 @@ from rapidfuzz import fuzz
 
 from ipod2playlist.library import Song
 
+ARTIST_GATE = 85  # minimum artist/channel similarity (0..100)
+MATCH_THRESHOLD = 80  # minimum title similarity to accept a candidate
+
 # Bracketed text is dropped only when it is noise; "(Live ...)" or "(Karaoke ...)" stays.
-_NOISE_WORDS = r"remaster(ed)?|feat|ft|featuring|official|video|audio|lyrics?|hd|explicit"
+_NOISE_WORDS = r"remaster(ed)?|feat|ft|featuring|official|video|audio|lyrics?|hd|explicit|4k"
 _BRACKETED_NOISE = re.compile(rf"\([^)]*\b({_NOISE_WORDS})\b[^)]*\)|\[[^\]]*\b({_NOISE_WORDS})\b[^\]]*\]")
+# A year alone in brackets, "(1975)" or "[2009]", is release noise; a bare "1999" is a title.
+_BRACKETED_YEAR = re.compile(r"\((19|20)\d{2}\)|\[(19|20)\d{2}\]")
 _REMASTER_SUFFIX = re.compile(r"\s-\s[^-]*remaster.*$")
 _FEATURING = re.compile(r"\b(feat|ft|featuring)\b.*$")
 _PUNCTUATION = re.compile(r"[^\w\s]|_")
@@ -30,18 +36,24 @@ def normalize(text: str) -> str:
     text = unicodedata.normalize("NFKD", text.casefold())
     text = "".join(c for c in text if not unicodedata.combining(c))
     text = _BRACKETED_NOISE.sub(" ", text)
+    text = _BRACKETED_YEAR.sub(" ", text)
     text = _REMASTER_SUFFIX.sub("", text)
     text = _FEATURING.sub("", text)
     text = _PUNCTUATION.sub(" ", text)
     return " ".join(text.split())
 
 
+def _without_the(name: str) -> str:
+    """Drop one leading "the " so "The Beatles" and "Beatles" compare equal."""
+    return name.removeprefix("the ")
+
+
 def score(song: Song, candidate: Candidate) -> float:
     """0..100. The artist is a gate, the title is the score.
 
     A wrong song by the right artist or a cover by someone else must not pass, so
-    the artist has to match first: the channel name or any one of its comma-separated names (minus "VEVO"/"Topic"/"Official")
-    is close to it, or it appears as whole words in the title ("Artist - Song" on a
+    the artist has to match first: the channel name or any one of its comma-separated
+    names (minus "VEVO"/"Topic"/"Official") is close to it, or it appears as whole words in the title ("Artist - Song" on a
     label channel). Then the score is the title similarity, with a leading "Artist -"
     removed from YouTube titles. Titles with different numbers ("Song 2" vs "Song 3")
     score 0, and so do titles with different version words (live, karaoke, remix...).
@@ -52,21 +64,26 @@ def score(song: Song, candidate: Candidate) -> float:
     names = [candidate.artist, *candidate.artist.split(",")]
     channels = [_CHANNEL_SUFFIX.sub("", normalize(name)) for name in names]
     in_title = bool(artist) and re.search(rf"\b{re.escape(artist)}\b", cand_title)
-    if max(fuzz.ratio(artist, channel) for channel in channels) < 85 and not in_title:
+    gate_artist = _without_the(artist)
+    best_channel = max(fuzz.ratio(gate_artist, _without_the(channel)) for channel in channels)
+    if best_channel < ARTIST_GATE and not in_title:
         return 0
     cand_title = cand_title.removeprefix(artist + " ")
     if set(_DIGITS.findall(title)) != set(_DIGITS.findall(cand_title)):
         return 0
     # Version tags are read from the raw titles: normalize drops "(Official Live Video)".
-    if set(_VERSION_WORDS.findall(song.title.casefold())) != set(
-        _VERSION_WORDS.findall(candidate.title.casefold())
+    # Counted, not set-compared: "Live and Let Die" must not match "... (Live)". A leading
+    # "<artist> - " is removed first so a band named Live does not tag every upload as live.
+    raw_cand_title = candidate.title.casefold().removeprefix(song.artist.casefold() + " - ")
+    if Counter(_VERSION_WORDS.findall(song.title.casefold())) != Counter(
+        _VERSION_WORDS.findall(raw_cand_title)
     ):
         return 0
     return fuzz.ratio(title, cand_title)
 
 
 def best_match(
-    song: Song, candidates: list[Candidate], threshold: float = 80
+    song: Song, candidates: list[Candidate], threshold: float = MATCH_THRESHOLD
 ) -> Candidate | None:
     """The highest-scoring candidate at or above the threshold, else None."""
     best = max(candidates, key=lambda c: score(song, c), default=None)

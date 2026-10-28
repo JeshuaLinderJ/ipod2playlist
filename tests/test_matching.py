@@ -118,3 +118,48 @@ def test_multi_artist_spotify_track_matches_any_listed_artist():
 
 def test_multi_artist_track_without_the_artist_is_no_match():
     assert best_match(song("Hello", "Adele"), [cand("Hello", "Lionel Richie, Diana Ross")]) is None
+
+
+def test_extra_live_word_in_candidate_title_is_no_match():
+    mine = song("Live and Let Die", "Paul McCartney & Wings")
+    assert best_match(mine, [cand("Live and Let Die (Live)", "Paul McCartney & Wings")]) is None
+
+
+def test_band_named_live_matches_its_studio_video():
+    mine = song("Lightning Crashes", "Live")
+    assert best_match(mine, [cand("Live - Lightning Crashes (Official Video)", "LiveVEVO")])
+
+
+def test_band_named_live_still_rejects_the_live_version():
+    mine = song("Lightning Crashes", "Live")
+    assert best_match(mine, [cand("Live - Lightning Crashes (Live at Woodstock)", "LiveVEVO")]) is None
+
+
+def test_4k_tag_is_noise():
+    assert best_match(
+        song("Song 2", "Blur"), [cand("Blur - Song 2 (Official Music Video) [4K]", "Blur")]
+    )
+
+
+def test_bracketed_year_is_noise():
+    assert best_match(
+        song("Bohemian Rhapsody", "Queen"), [cand("Queen - Bohemian Rhapsody (1975)", "Queen Official")]
+    )
+
+
+def test_bare_year_number_still_gates():
+    assert best_match(song("1999", "Prince"), [cand("1998", "Prince")]) is None
+
+
+def test_leading_the_is_ignored_in_the_artist_gate_both_ways():
+    assert best_match(song("Let It Be", "Beatles"), [cand("Let It Be", "The Beatles")])
+    assert best_match(song("Let It Be", "The Beatles"), [cand("Let It Be", "Beatles")])
+
+
+def test_dropping_the_does_not_open_the_artist_gate():
+    assert best_match(song("Hello", "The Beatles"), [cand("Hello", "The Beat")]) is None
+
+
+def test_partial_title_overlap_is_no_match():
+    mine = song("Yesterday", "The Carpenters")
+    assert best_match(mine, [cand("Yesterday Once More", "The Carpenters")]) is None
