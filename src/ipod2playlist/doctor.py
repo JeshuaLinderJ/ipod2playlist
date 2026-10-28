@@ -68,7 +68,7 @@ def _progress_lines(progress_path: Path) -> tuple[list[str], Progress | None]:
     try:
         progress = Progress(progress_path)  # reading only; save() is never called
     except (OSError, ValueError):
-        return [f"!!   {progress_path} is corrupt."], None
+        return [f"!!   Progress file {progress_path} is corrupt; fix or delete it."], None
     lines = []
     for service in progress.services():
         added = len(progress.keys_with_status(service, "added"))
@@ -123,6 +123,8 @@ def report(songs_path: Path, progress_path: Path, secrets_path: Path, token_path
             lines.append(f"Next: ipod2playlist scan {quoted(ipods[0])}")
         else:
             lines.append('Next: plug in the iPod, then ipod2playlist scan "/Volumes/<iPod name>"')
+    elif progress is None:  # corrupt: spotify/youtube would stop with the same message
+        lines.append(f"Next: fix or delete {quoted(progress_path)}, then run ipod2playlist doctor again.")
     elif not spotify_ok:
         lines.append("Next: fix the Spotify settings above (README step 2).")
     elif "spotify" not in services:

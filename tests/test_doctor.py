@@ -110,7 +110,16 @@ def test_progress_lines_and_corrupt_file(tmp_path):
     assert "ok   spotify: 1 added, 1 missing, playlist not created yet" in lines
     assert "ok   youtube: 0 added, 0 missing, playlist saved" in lines
     setup.progress.write_text("[]")
-    assert f"!!   {setup.progress} is corrupt." in setup.report()
+    assert f"!!   Progress file {setup.progress} is corrupt; fix or delete it." in setup.report()
+
+
+def test_corrupt_progress_next_step_names_the_file(tmp_path):
+    setup = Setup(tmp_path)
+    library.save_songs([song("a")], setup.songs)
+    setup.progress.write_text("not json")
+    next_line = setup.next_line(FULL_ENV)
+    assert str(setup.progress) in next_line
+    assert "spotify" not in next_line
 
 
 def test_estimate_skips_untagged_and_next_is_youtube(tmp_path):
