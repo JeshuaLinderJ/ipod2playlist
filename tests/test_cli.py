@@ -176,3 +176,44 @@ def test_missing_youtube_client_secrets_exits_with_hint(tmp_path):
         f"{tmp_path / 'nope.json'} not found; download the OAuth client JSON (see README) "
         "or pass --client-secrets."
     )
+
+
+def test_fake_ipod_is_a_subfolder(fake_ipod, tmp_path):
+    assert fake_ipod == tmp_path / "ipod"
+    assert [p.name for p in tmp_path.iterdir()] == ["ipod"]
+
+
+def test_scan_into_missing_folder_exits_and_writes_nothing(fake_ipod, work):
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["scan", str(fake_ipod), "--songs", "nowhere/songs.json"])
+
+    assert stopped.value.code == "Folder nowhere does not exist; create it or choose another --songs path."
+    assert not (work / "nowhere").exists()
+    assert not (work / "songs.json").exists()
+
+
+@pytest.mark.parametrize("content", [
+    '[{"title": "T", "artist": ["x"], "album": "A", "path": "a.mp3"}]',
+    "[1]",
+    '[{"title": "T"}]',
+    "{}",
+])
+def test_bad_song_list_shapes_exit_cleanly(work, monkeypatch, content):
+    (work / "songs.json").write_text(content)
+    use_services(monkeypatch, spotify=SpotifyService(FakeSpotify()))
+
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["missing", "--service", "spotify"])
+
+    assert stopped.value.code == "songs.json is not a valid song list; re-run scan."
+
+
+@pytest.mark.parametrize("content", ["{}", "[]", '"text"'])
+def test_wrong_shape_progress_file_exits_cleanly(work, monkeypatch, content):
+    (work / "songs.json").write_text("[]")
+    (work / "progress.json").write_text(content)
+
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["missing", "--service", "spotify"])
+
+    assert stopped.value.code == "Progress file progress.json is corrupt; fix or delete it."

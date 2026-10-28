@@ -1,6 +1,5 @@
 """The `ipod2playlist` command: scan, spotify, youtube, missing."""
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -61,7 +60,7 @@ def _build_service(name: str, args):
 def _load_progress(path: Path) -> Progress:
     try:
         return Progress(path)
-    except json.JSONDecodeError:
+    except ValueError:  # bad JSON, or JSON that is not a progress file
         raise SystemExit(f"Progress file {path} is corrupt; fix or delete it.")
 
 
@@ -77,6 +76,8 @@ def _load_songs(path: Path) -> list[library.Song]:
 def _scan(args) -> None:
     if not args.root.is_dir():
         raise SystemExit(f"{args.root} is not a directory (is the iPod mounted?)")
+    if not args.songs.parent.is_dir():
+        raise SystemExit(f"Folder {args.songs.parent} does not exist; create it or choose another --songs path.")
     found = scan(args.root)
     songs = library.dedupe(found)
     library.save_songs(songs, args.songs)

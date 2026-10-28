@@ -5,7 +5,7 @@ from pathlib import Path
 
 import mutagen
 
-from ipod2playlist.library import Song
+from ipod2playlist.library import UNKNOWN_ALBUM, UNKNOWN_ARTIST, Song
 
 AUDIO_EXTENSIONS = frozenset(
     {".mp3", ".m4a", ".m4p", ".aac", ".flac", ".ogg", ".wav", ".aif", ".aiff"}
@@ -14,7 +14,9 @@ AUDIO_EXTENSIONS = frozenset(
 
 def _first(audio, key: str) -> str | None:
     values = audio.get(key)
-    return values[0].strip() or None if values else None
+    if not values:
+        return None
+    return values[0].strip() or None
 
 
 def read_song(path: Path) -> Song | None:
@@ -31,8 +33,8 @@ def read_song(path: Path) -> Song | None:
     tags = audio.tags or {}
     return Song(
         title=_first(tags, "title") or path.stem,
-        artist=_first(tags, "artist") or "Unknown Artist",
-        album=_first(tags, "album") or "Unknown Album",
+        artist=_first(tags, "artist") or UNKNOWN_ARTIST,
+        album=_first(tags, "album") or UNKNOWN_ALBUM,
         path=str(path),
     )
 

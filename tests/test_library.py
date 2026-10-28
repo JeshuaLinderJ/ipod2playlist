@@ -1,3 +1,7 @@
+import csv
+
+import pytest
+
 from ipod2playlist.library import Song, dedupe, load_songs, save_songs, write_tsv
 
 
@@ -37,3 +41,33 @@ def test_write_tsv_header_and_row(tmp_path):
         "Title\tArtist\tAlbum\tPath",
         "Halo\tBeyoncé\tI Am\ta.mp3",
     ]
+
+
+def test_write_tsv_quotes_tabs_and_newlines(tmp_path):
+    path = tmp_path / "songs.tsv"
+    write_tsv([song(title="Tab\there", artist="New\nLine")], path)
+    with open(path, encoding="utf-8", newline="") as f:
+        rows = list(csv.reader(f, delimiter="\t"))
+    assert len(rows) == 2
+    assert rows[1] == ["Tab\there", "New\nLine", "I Am", "a.mp3"]
+
+
+def test_load_songs_coerces_null_and_numbers(tmp_path):
+    path = tmp_path / "songs.json"
+    path.write_text('[{"title": 1999, "artist": "Prince", "album": null, "path": "a.mp3"}]')
+    assert load_songs(path) == [Song("1999", "Prince", "", "a.mp3")]
+
+
+@pytest.mark.parametrize("content", [
+    '[{"title": "T", "artist": ["x"], "album": "A", "path": "a.mp3"}]',
+    "[1]",
+    '["x"]',
+    '[{"title": "T"}]',
+    "{}",
+    '"x"',
+])
+def test_load_songs_rejects_wrong_shapes(tmp_path, content):
+    path = tmp_path / "songs.json"
+    path.write_text(content)
+    with pytest.raises(TypeError):
+        load_songs(path)

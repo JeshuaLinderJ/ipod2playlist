@@ -52,3 +52,12 @@ def test_corrupt_mp3_is_excluded_without_crashing(fake_ipod):
 def test_read_song_stores_path_as_str(fake_ipod):
     song = read_song(fake_ipod / "iPod_Control/Music/F00/ABCD.mp3")
     assert song.path == str(fake_ipod / "iPod_Control/Music/F00/ABCD.mp3")
+
+
+def test_directory_named_like_a_song_is_not_returned(fake_ipod, capsys):
+    (fake_ipod / "iPod_Control/Music/F07/FAKE.mp3").mkdir(parents=True)
+    songs = scan(fake_ipod)
+    assert len(songs) == 6
+    assert "FAKE.mp3" not in by_name(songs)
+    # Without the is_file check mutagen would also reject it (count still 6) but would warn.
+    assert "warning: skipping" not in capsys.readouterr().err

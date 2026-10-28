@@ -26,9 +26,12 @@ APPLEDOUBLE_TITLE = "APPLEDOUBLE SHOULD NOT APPEAR"
 
 @pytest.fixture
 def fake_ipod(tmp_path) -> Path:
-    """A disk-mode iPod Classic tree in tmp_path; returns the iPod root."""
+    """A disk-mode iPod Classic tree in tmp_path / "ipod"; returns the iPod root.
+
+    Files tests write under tmp_path (songs.json, backups) lie outside the iPod root."""
+    root = tmp_path / "ipod"
     for rel, tags in IPOD_FILES + [(APPLEDOUBLE, {"title": APPLEDOUBLE_TITLE, "artist": "X", "album": "X"})]:
-        dest = tmp_path / rel
+        dest = root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(FIXTURES / f"silence{dest.suffix}", dest)
         if tags:
@@ -36,7 +39,7 @@ def fake_ipod(tmp_path) -> Path:
             audio.update({k: [v] for k, v in tags.items()})
             audio.save()
     for rel in IPOD_JUNK:
-        junk = tmp_path / rel
+        junk = root / rel
         junk.parent.mkdir(parents=True, exist_ok=True)
         junk.write_bytes(b"\x00junk\xff" * 50)
-    return tmp_path
+    return root

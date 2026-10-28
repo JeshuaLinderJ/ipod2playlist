@@ -12,7 +12,10 @@ class Progress:
         self.path = Path(path)
         self._data = {"version": 1, "services": {}}
         if self.path.exists():
-            self._data = json.loads(self.path.read_text())
+            data = json.loads(self.path.read_text())
+            if not isinstance(data, dict) or not isinstance(data.get("services"), dict):
+                raise ValueError(f"{path} is not a progress file")
+            self._data = data
 
     def _service(self, service: str) -> dict:
         return self._data["services"].setdefault(service, {"playlist_id": None, "songs": {}})

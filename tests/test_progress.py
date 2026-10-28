@@ -99,3 +99,11 @@ def test_leftover_tmp_file_is_ignored_and_overwritten(tmp_path):
     reloaded.record("spotify", "c|d", "added")
     reloaded.save()
     assert Progress(path).status("spotify", "c|d") == "added"
+
+
+@pytest.mark.parametrize("content", ["{}", "[]", '"text"'])
+def test_wrong_shape_file_raises_value_error(tmp_path, content):
+    path = tmp_path / "progress.json"
+    path.write_text(content)
+    with pytest.raises(ValueError):
+        Progress(path)
