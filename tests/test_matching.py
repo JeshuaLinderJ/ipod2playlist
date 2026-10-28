@@ -1,0 +1,64 @@
+from ipod2playlist.matching import Candidate, best_match, normalize
+
+
+def song(title, artist):
+    from ipod2playlist.library import Song
+
+    return Song(title=title, artist=artist, album="", path="")
+
+
+def cand(title, artist, id="x"):
+    return Candidate(id=id, title=title, artist=artist)
+
+
+def test_exact_title_and_artist_match():
+    assert best_match(song("Creep", "Radiohead"), [cand("Creep", "Radiohead")])
+
+
+def test_remaster_suffixes_are_ignored_in_either_field():
+    assert best_match(song("Song (Remastered 2009)", "Band"), [cand("Song", "Band")])
+    assert best_match(song("Song", "Band"), [cand("Song - 2011 Remaster", "Band")])
+
+
+def test_featuring_credit_is_ignored():
+    assert best_match(song("Song (feat. X)", "Band"), [cand("Song", "Band")])
+    assert best_match(song("Song", "Band"), [cand("Song ft. Y", "Band")])
+
+
+def test_accents_are_ignored():
+    assert best_match(song("Jóga", "Björk"), [cand("Joga", "Bjork")])
+
+
+def test_same_title_different_artist_is_no_match():
+    assert best_match(song("Hello", "Adele"), [cand("Hello", "Lionel Richie")]) is None
+
+
+def test_different_title_same_artist_is_no_match():
+    assert best_match(song("Creep", "Radiohead"), [cand("Karma Police", "Radiohead")]) is None
+
+
+def test_youtube_video_title_and_vevo_channel_match():
+    video = cand("Radiohead - Karma Police (Official Video)", "RadioheadVEVO")
+    assert best_match(song("Karma Police", "Radiohead"), [video])
+
+
+def test_youtube_topic_channel_matches():
+    topic = cand("Karma Police", "Radiohead - Topic")
+    assert best_match(song("Karma Police", "Radiohead"), [topic])
+
+
+def test_best_match_picks_the_higher_scorer():
+    wanted = song("Karma Police", "Radiohead")
+    candidates = [
+        cand("Karma Police (Live)", "Some Cover Band", id="cover"),
+        cand("Karma Police", "Radiohead", id="right"),
+    ]
+    assert best_match(wanted, candidates).id == "right"
+
+
+def test_best_match_of_no_candidates_is_none():
+    assert best_match(song("Creep", "Radiohead"), []) is None
+
+
+def test_normalize_strips_noise():
+    assert normalize("Jóga (Live) [Bonus] - 2009 Remaster feat. X!") == "joga"
