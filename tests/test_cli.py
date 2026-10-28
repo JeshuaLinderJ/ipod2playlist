@@ -552,3 +552,43 @@ def test_youtube_network_error_gets_the_network_message(work, monkeypatch):
 
     assert code == ("Could not reach the service (Unable to find the server). Check the internet "
                     "connection and re-run the same command; progress is saved.")
+
+
+def test_youtube_dry_run_estimates_without_login_or_search(fake_ipod, work, monkeypatch, capsys):
+    scan_and_spotify_fake(fake_ipod, monkeypatch, [("Hey Jude", "The Beatles")])
+    cli.main(["spotify"])  # 4 missing: 2 tagged, 2 untagged
+    before = (work / "progress.json").read_bytes()
+    capsys.readouterr()
+
+    def fail(name, args):
+        raise AssertionError("a youtube dry run must not build the service")
+    monkeypatch.setattr(commands, "build_service", fail)
+
+    cli.main(["youtube", "--dry-run", "--only-spotify-missing"])
+
+    assert "2 songs to search on YouTube: about 1 day(s)" in capsys.readouterr().out
+    assert (work / "progress.json").read_bytes() == before
+
+
+def test_spotify_dry_run_prints_summary_and_writes_nothing(fake_ipod, work, monkeypatch, capsys):
+    fake = scan_and_spotify_fake(fake_ipod, monkeypatch)
+
+    cli.main(["spotify", "--dry-run"])
+
+    out = capsys.readouterr().out
+    assert "would add:" in out
+    assert "3 would be added / 2 missing / 0 skipped / 0 failed (dry run: nothing was changed)" in out
+    assert not (work / "progress.json").exists()
+    assert fake.playlists == []
+
+
+def test_dry_run_with_new_playlist_is_refused_before_the_reset(fake_ipod, work, monkeypatch):
+    scan_and_spotify_fake(fake_ipod, monkeypatch)
+    cli.main(["spotify"])
+    before = (work / "progress.json").read_bytes()
+
+    with pytest.raises(SystemExit) as refused:
+        cli.main(["spotify", "--dry-run", "--new-playlist"])
+
+    assert str(refused.value) == "--dry-run and --new-playlist can't be used together."
+    assert (work / "progress.json").read_bytes() == before

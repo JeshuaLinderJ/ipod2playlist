@@ -1,6 +1,7 @@
 """YouTube: search for videos and build a playlist, through a googleapiclient client."""
 import html
 import json
+import math
 import os
 from pathlib import Path
 
@@ -18,6 +19,18 @@ from ipod2playlist.matching import Candidate
 SCOPES = ["https://www.googleapis.com/auth/youtube"]
 SEARCH_LIMIT = 5
 QUOTA_REASONS = {"quotaExceeded", "dailyLimitExceeded"}
+SEARCH_COST = 100
+INSERT_COST = 50
+CREATE_COST = 50
+DAILY_QUOTA = 10_000
+
+
+def days_needed(song_count: int, has_playlist: bool) -> int:
+    """Days of free quota needed. Worst case: assumes every song is found and added."""
+    if song_count == 0:
+        return 0
+    units = song_count * (SEARCH_COST + INSERT_COST) + (0 if has_playlist else CREATE_COST)
+    return math.ceil(units / DAILY_QUOTA)
 
 
 class YouTubeService:

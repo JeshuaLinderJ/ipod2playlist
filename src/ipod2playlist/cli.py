@@ -36,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--name", default=DEFAULT_PLAYLIST_NAME, help="playlist name")
         command.add_argument("--public", action="store_true", help="make the playlist public (default: private)")
         command.add_argument("--retry-missing", action="store_true", help="search again for songs marked missing")
+        command.add_argument("--dry-run", action="store_true",
+                             help="show what would happen without changing anything")
         command.add_argument("--new-playlist", action="store_true",
                              help="start a new playlist, forgetting only this service's saved results")
 

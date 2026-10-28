@@ -5,7 +5,7 @@ from ipod2playlist.errors import PlaylistGone
 from ipod2playlist.library import UNKNOWN_ARTIST, Song
 from ipod2playlist.progress import Progress
 from ipod2playlist.spotify import SpotifyService
-from ipod2playlist.sync import SyncResult, sync
+from ipod2playlist.sync import SyncResult, pending, search_count, searchable, sync
 from ipod2playlist.youtube import QuotaExceeded, YouTubeService
 
 TITLES = ["Alpha", "Bravo", "Charlie", "Delta"]
@@ -240,3 +240,80 @@ def test_a_success_between_failures_resets_the_count(tmp_path):
     result = sync(songs(), SpotifyService(fake), Progress(tmp_path / "progress.json"), "My Mix")
 
     assert result == SyncResult(added=1, missing=0, skipped=0, failed=3)
+
+
+def test_dry_run_changes_nothing_and_says_what_would_happen(tmp_path, capsys):
+    service, fake = spotify_service(["Alpha", "Bravo"])  # 2 of 4 songs are in the catalog
+    path = tmp_path / "progress.json"
+
+    result = sync(songs(), service, Progress(path), "My Mix", dry_run=True)
+
+    assert (result.added, result.missing) == (2, 2)
+    assert fake.playlists == []
+    assert not path.exists()
+    assert "would add: The Band - Alpha  ->  Alpha by The Band" in capsys.readouterr().out
+
+
+def test_dry_run_never_calls_create_add_record_or_save(tmp_path, monkeypatch):
+    service, _ = spotify_service()
+    progress = Progress(tmp_path / "progress.json")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("a dry run must not change anything")
+
+    for owner, method in [(service, "create_playlist"), (service, "add"), (service, "playlist_exists"),
+                          (progress, "record"), (progress, "save"), (progress, "set_playlist_id")]:
+        monkeypatch.setattr(owner, method, forbidden)
+
+    assert sync(songs(), service, progress, "My Mix", dry_run=True).added == 4
+
+
+def test_dry_run_after_real_run_skips_everything_and_searches_nothing(tmp_path):
+    service, fake = spotify_service()
+    path = tmp_path / "progress.json"
+    sync(songs(), service, Progress(path), "My Mix")
+    fake.queries.clear()
+    before = path.read_bytes()
+
+    result = sync(songs(), service, Progress(path), "My Mix", dry_run=True)
+
+    assert result.skipped == 4
+    assert fake.queries == []
+    assert path.read_bytes() == before
+
+
+def test_dry_run_counts_untagged_as_missing_without_writing(tmp_path):
+    service, fake = spotify_service()
+    untagged = [Song(title="Alpha", artist=UNKNOWN_ARTIST, album="", path="/a.mp3"),
+                Song(title="Bravo", artist="", album="", path="/b.mp3")]
+    path = tmp_path / "progress.json"
+
+    result = sync(untagged, service, Progress(path), "My Mix", dry_run=True)
+
+    assert result.missing == 2
+    assert fake.queries == []
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("retry_missing", [False, True])
+def test_pending_agrees_with_sync(tmp_path, retry_missing):
+    service, _ = spotify_service(["Alpha", "Charlie", "Delta"])
+    path = tmp_path / "progress.json"
+    sync(songs(["Alpha", "Bravo"]), service, Progress(path), "My Mix")  # Alpha added, Bravo missing
+    progress = Progress(path)
+
+    expected = len(pending(songs(), progress, "spotify", retry_missing))
+    result = sync(songs(), service, progress, "My Mix", retry_missing=retry_missing)
+
+    assert expected == result.added + result.missing + result.failed
+
+
+def test_untagged_songs_are_not_searchable_or_counted(tmp_path):
+    progress = Progress(tmp_path / "progress.json")
+    untagged = [Song(title="A", artist=UNKNOWN_ARTIST, album="", path="/a.mp3"),
+                Song(title="B", artist="", album="", path="/b.mp3")]
+
+    assert not any(searchable(s) for s in untagged)
+    assert searchable(songs()[0])
+    assert search_count(untagged, progress, "youtube") == 0
+    assert search_count(untagged + songs(), progress, "youtube") == 4

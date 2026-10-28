@@ -54,6 +54,7 @@ def run_scan(args) -> None:
 
 def run_playlist(args) -> None:
     songs = load_songs(args.songs)
+    playlist.check_flags(args.dry_run, args.new_playlist)  # first, so a refused run leaves progress alone
     progress = load_progress(args.progress)
     if args.new_playlist:
         print(playlist.start_new(progress, args.command, args.progress))
@@ -62,7 +63,14 @@ def run_playlist(args) -> None:
     if not songs:  # no login needed for nothing to do
         print(playlist.no_songs_message(only_missing, progress))
         return
+    if args.dry_run and args.command == "youtube":  # no login, no search: searches cost quota
+        print(playlist.youtube_estimate(songs, progress, args.retry_missing))
+        return
     service = build_service(args.command, args)
+    if args.dry_run:
+        print(playlist.dry_run_summary(sync(songs, service, progress, args.name, retry_missing=args.retry_missing,
+                                            dry_run=True)))
+        return
     result = sync(songs, service, progress, args.name, public=args.public, retry_missing=args.retry_missing)
     print(f"{result.added} added / {result.missing} missing / {result.skipped} skipped / {result.failed} failed")
     if result.failed and not result.added:
