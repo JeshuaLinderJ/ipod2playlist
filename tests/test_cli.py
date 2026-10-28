@@ -1,3 +1,5 @@
+import argparse
+
 import pytest
 from fakes import FakeSpotify, FakeYouTube
 
@@ -162,3 +164,15 @@ def test_unreadable_songs_file_exits_with_hint(work):
         cli.main(["missing", "--service", "spotify"])
 
     assert stopped.value.code == "songs.json is not a valid song list; re-run scan."
+
+
+def test_missing_youtube_client_secrets_exits_with_hint(tmp_path):
+    args = argparse.Namespace(client_secrets=tmp_path / "nope.json", token=tmp_path / "token.json")
+
+    with pytest.raises(SystemExit) as stopped:
+        cli._build_service("youtube", args)
+
+    assert stopped.value.code == (
+        f"{tmp_path / 'nope.json'} not found; download the OAuth client JSON (see README) "
+        "or pass --client-secrets."
+    )

@@ -52,6 +52,9 @@ def _build_service(name: str, args):
     """The only place real API clients are built; tests replace this."""
     if name == "spotify":
         return SpotifyService(spotify.make_client())
+    if not args.client_secrets.exists():
+        raise SystemExit(f"{args.client_secrets} not found; download the OAuth client JSON (see README) "
+                         "or pass --client-secrets.")
     return YouTubeService(youtube.make_client(args.client_secrets, args.token))
 
 

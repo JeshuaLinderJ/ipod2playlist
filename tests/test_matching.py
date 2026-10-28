@@ -105,3 +105,16 @@ def test_official_live_video_is_no_match_for_studio_song():
 def test_live_song_matches_its_live_version():
     live = cand("Karma Police - Live", "Radiohead")
     assert best_match(song("Karma Police (Live)", "Radiohead"), [live])
+
+
+def test_multi_artist_spotify_track_matches_any_listed_artist():
+    assert best_match(song("Umbrella", "Rihanna"), [cand("Umbrella", "Rihanna, JAY-Z")])
+    assert best_match(song("Under Pressure", "Queen"), [cand("Under Pressure", "Queen, David Bowie")])
+    assert best_match(
+        song("Empire State of Mind", "Jay-Z feat. Alicia Keys"),
+        [cand("Empire State of Mind", "JAY-Z, Alicia Keys")],
+    )
+
+
+def test_multi_artist_track_without_the_artist_is_no_match():
+    assert best_match(song("Hello", "Adele"), [cand("Hello", "Lionel Richie, Diana Ross")]) is None

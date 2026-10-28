@@ -40,7 +40,7 @@ def score(song: Song, candidate: Candidate) -> float:
     """0..100. The artist is a gate, the title is the score.
 
     A wrong song by the right artist or a cover by someone else must not pass, so
-    the artist has to match first: the channel name (minus "VEVO"/"Topic"/"Official")
+    the artist has to match first: the channel name or any one of its comma-separated names (minus "VEVO"/"Topic"/"Official")
     is close to it, or it appears as whole words in the title ("Artist - Song" on a
     label channel). Then the score is the title similarity, with a leading "Artist -"
     removed from YouTube titles. Titles with different numbers ("Song 2" vs "Song 3")
@@ -48,9 +48,11 @@ def score(song: Song, candidate: Candidate) -> float:
     """
     title, artist = normalize(song.title), normalize(song.artist)
     cand_title = normalize(candidate.title)
-    channel = _CHANNEL_SUFFIX.sub("", normalize(candidate.artist))
+    # Spotify joins several artists with commas ("Rihanna, JAY-Z"); any one of them may match.
+    names = [candidate.artist, *candidate.artist.split(",")]
+    channels = [_CHANNEL_SUFFIX.sub("", normalize(name)) for name in names]
     in_title = bool(artist) and re.search(rf"\b{re.escape(artist)}\b", cand_title)
-    if fuzz.ratio(artist, channel) < 85 and not in_title:
+    if max(fuzz.ratio(artist, channel) for channel in channels) < 85 and not in_title:
         return 0
     cand_title = cand_title.removeprefix(artist + " ")
     if set(_DIGITS.findall(title)) != set(_DIGITS.findall(cand_title)):
