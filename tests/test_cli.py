@@ -2,6 +2,7 @@ import argparse
 import json
 from types import SimpleNamespace
 
+import httplib2
 import pytest
 import requests
 from fakes import FakeSpotify, FakeYouTube, http_error
@@ -102,6 +103,9 @@ def test_missing_makes_no_api_calls(fake_ipod, work, monkeypatch):
 
 def test_hint_when_every_song_fails(fake_ipod, work, monkeypatch, capsys):
     cli.main(["scan", str(fake_ipod)])
+    # Two songs: three failures in a row would stop the run (see test_sync).
+    two = [s for s in library.load_songs(work / "songs.json") if s.title in ("Hey Jude", "So What")]
+    library.save_songs(two, work / "songs.json")
 
     class DeletedPlaylist(SpotifyService):
         def add(self, playlist_id, item_id):
@@ -113,7 +117,7 @@ def test_hint_when_every_song_fails(fake_ipod, work, monkeypatch, capsys):
     cli.main(["spotify"])
 
     out = capsys.readouterr().out
-    assert "0 added / 2 missing / 0 skipped / 3 failed" in out
+    assert "0 added / 0 missing / 0 skipped / 2 failed" in out
     assert "--new-playlist" in out and "delete progress.json" not in out
 
 
@@ -518,3 +522,33 @@ def test_only_spotify_missing_when_spotify_found_everything(fake_ipod, work, mon
     out = capsys.readouterr().out
     assert "No songs to process. Spotify found every song." in out
     assert "first" not in out
+
+
+def test_repeated_network_failure_stops_with_the_network_message(fake_ipod, work, monkeypatch):
+    cli.main(["scan", str(fake_ipod)])
+    searches = []
+
+    class Offline(SpotifyService):
+        def search(self, song):
+            searches.append(song)
+            raise requests.exceptions.ConnectionError("no route")
+
+    use_services(monkeypatch, spotify=Offline(FakeSpotify()))
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["spotify"])
+
+    assert stopped.value.code == ("Could not reach the service (no route). Check the internet connection "
+                                  "and re-run the same command; progress is saved.")
+    assert len(searches) == 3
+
+
+def test_youtube_network_error_gets_the_network_message(work, monkeypatch):
+    class Offline(YouTubeService):
+        def playlist_exists(self, playlist_id):
+            raise httplib2.ServerNotFoundError("Unable to find the server")
+
+    (work / "progress.json").write_text('{"services": {"youtube": {"playlist_id": "p1", "songs": {}}}}')
+    code = run_expecting_exit(monkeypatch, work, "youtube", Offline(FakeYouTube()))
+
+    assert code == ("Could not reach the service (Unable to find the server). Check the internet "
+                    "connection and re-run the same command; progress is saved.")

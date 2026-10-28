@@ -209,3 +209,34 @@ def test_songs_without_an_artist_are_recorded_missing_and_not_searched(tmp_path,
     assert fake.queries == []
     assert [progress.status("spotify", s.key) for s in untagged] == ["missing", "missing"]
     assert "not searched" in capsys.readouterr().out
+
+
+class FailingSearch(FakeSpotify):
+    """Search raises for the given titles, like a dropped network."""
+
+    def __init__(self, failing, catalog=()):
+        super().__init__(catalog)
+        self.failing = failing
+
+    def search(self, q, limit=10, type="track"):
+        if any(title in q for title in self.failing):
+            raise ConnectionError("network down")
+        return super().search(q, limit, type)
+
+
+def test_three_failures_in_a_row_stop_the_run_and_save_progress(tmp_path):
+    fake = FailingSearch(["Bravo", "Charlie", "Delta"], catalog=[spotify_track("Alpha")])
+    path = tmp_path / "progress.json"
+
+    with pytest.raises(ConnectionError):
+        sync(songs(), SpotifyService(fake), Progress(path), "My Mix")
+
+    assert Progress(path).status("spotify", songs()[0].key) == "added"
+
+
+def test_a_success_between_failures_resets_the_count(tmp_path):
+    fake = FailingSearch(["Alpha", "Charlie", "Delta"], catalog=[spotify_track("Bravo")])
+
+    result = sync(songs(), SpotifyService(fake), Progress(tmp_path / "progress.json"), "My Mix")
+
+    assert result == SyncResult(added=1, missing=0, skipped=0, failed=3)

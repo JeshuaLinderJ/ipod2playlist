@@ -6,6 +6,9 @@ from ipod2playlist.library import UNKNOWN_ARTIST, Song
 from ipod2playlist.matching import best_match
 from ipod2playlist.progress import Progress
 
+# A revoked login or a dropped network fails every song; stop and let the CLI explain, not print N lines.
+MAX_CONSECUTIVE_FAILURES = 3
+
 
 @dataclass
 class SyncResult:
@@ -30,6 +33,7 @@ def sync(songs: list[Song], service, progress: Progress, playlist_name: str,
         progress.set_playlist_id(name, playlist_id)
         progress.save()
 
+    consecutive_failures = 0
     for song in songs:
         status = progress.status(name, song.key)
         if status == "added" or (status == "missing" and not retry_missing):
@@ -53,7 +57,13 @@ def sync(songs: list[Song], service, progress: Progress, playlist_name: str,
         except Exception as error:  # one bad song must not stop the run; KeyboardInterrupt still does
             print(f"! failed: {song.artist} - {song.title} ({error})")
             result.failed += 1
+            consecutive_failures += 1
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                progress.save()
+                raise
             continue
+
+        consecutive_failures = 0
 
         if match is None:
             progress.record(name, song.key, "missing")

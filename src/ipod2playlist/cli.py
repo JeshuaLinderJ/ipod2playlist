@@ -6,6 +6,7 @@ from pathlib import Path
 
 import google.auth.exceptions
 import googleapiclient.errors
+import httplib2
 import requests
 import spotipy
 from dotenv import find_dotenv, load_dotenv
@@ -81,7 +82,8 @@ def main(argv=None) -> None:
         raise SystemExit(messages.youtube_refused(error))
     except google.auth.exceptions.GoogleAuthError as error:
         raise SystemExit(messages.youtube_login(error))
-    except requests.exceptions.RequestException as error:
+    except (requests.exceptions.RequestException, httplib2.HttpLib2Error, ConnectionError, TimeoutError) as error:
+        # Not bare OSError: that would mislabel local file errors as network errors.
         raise SystemExit(messages.network(error))
     except KeyboardInterrupt:
         print(messages.INTERRUPTED, file=sys.stderr)
