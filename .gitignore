@@ -13,3 +13,4 @@ progress.json
 .superpowers/
 ipod_song_list.*
 spotify_missing_songs.txt
+tiny*.json
