@@ -67,7 +67,7 @@ def _load_songs(path: Path) -> list[library.Song]:
         return library.load_songs(path)
     except FileNotFoundError:
         raise SystemExit(f"{path} not found; run `ipod2playlist scan <ipod path>` first.")
-    except (json.JSONDecodeError, TypeError):
+    except (OSError, ValueError, TypeError):  # unreadable, bad encoding, bad JSON (a ValueError), wrong shape
         raise SystemExit(f"{path} is not a valid song list; re-run scan.")
 
 

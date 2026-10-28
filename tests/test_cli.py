@@ -153,3 +153,12 @@ def test_scan_of_missing_directory_leaves_songs_untouched(work):
 
     assert "is not a directory (is the iPod mounted?)" in stopped.value.code
     assert (work / "songs.json").read_text() == "[1]"
+
+
+def test_unreadable_songs_file_exits_with_hint(work):
+    (work / "songs.json").mkdir()
+
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["missing", "--service", "spotify"])
+
+    assert stopped.value.code == "songs.json is not a valid song list; re-run scan."
