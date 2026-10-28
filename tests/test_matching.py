@@ -163,3 +163,7 @@ def test_dropping_the_does_not_open_the_artist_gate():
 def test_partial_title_overlap_is_no_match():
     mine = song("Yesterday", "The Carpenters")
     assert best_match(mine, [cand("Yesterday Once More", "The Carpenters")]) is None
+
+
+def test_titles_that_normalize_to_nothing_are_no_match():
+    assert best_match(song("(1999)", "Prince"), [cand("(1984)", "Prince")]) is None

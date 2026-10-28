@@ -60,6 +60,8 @@ def score(song: Song, candidate: Candidate) -> float:
     """
     title, artist = normalize(song.title), normalize(song.artist)
     cand_title = normalize(candidate.title)
+    if not title or not cand_title:  # two empty titles would score 100 (fuzz.ratio("", "") == 100)
+        return 0
     # Spotify joins several artists with commas ("Rihanna, JAY-Z"); any one of them may match.
     names = [candidate.artist, *candidate.artist.split(",")]
     channels = [_CHANNEL_SUFFIX.sub("", normalize(name)) for name in names]
