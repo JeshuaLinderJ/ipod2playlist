@@ -20,7 +20,7 @@ written in the current working directory.
 ## Credentials
 
 **Spotify.** In the Spotify Developer Dashboard, create an app and add a Redirect URI (any `http://127.0.0.1:PORT/...`
-address). Put its details in a `.env` file:
+address). The Redirect URI must be exactly the same in the dashboard and in `.env` (`SPOTIPY_REDIRECT_URI`). Put its details in a `.env` file:
 
 ```
 SPOTIPY_CLIENT_ID=...
@@ -77,8 +77,9 @@ ipod2playlist youtube --only-spotify-missing
 ## Manual check with a real iPod and real accounts
 
 1. Mount the iPod, run `scan` on it, and open `songs.tsv`: do the artists and titles look right?
-2. Copy `songs.json` to `tiny.json`, keep only a few entries, and run `spotify --songs tiny.json --progress tiny_progress.json`. The separate progress file keeps this test playlist apart from the real run.
-3. Run `youtube` on a couple of songs the same way (same `--songs` and `--progress`).
+2. Copy `songs.json` to `tiny.json`, keep only a few entries, and run `spotify --songs tiny.json --progress tiny_progress.json --name "ipod2playlist test"`. The separate progress file keeps this test playlist apart from the real run.
+3. Run `youtube` on a couple of songs the same way (same `--songs`, `--progress` and `--name`).
 4. Re-run both commands: nothing should be added again, and the same playlist is used.
 5. In Spotify and YouTube, confirm the playlists are private.
-6. Run `missing --service spotify` and check that the listed songs really are absent.
+6. Run `missing --service spotify --songs tiny.json --progress tiny_progress.json` and check that the listed songs really are absent.
+7. Delete the "ipod2playlist test" playlists in Spotify and YouTube.
