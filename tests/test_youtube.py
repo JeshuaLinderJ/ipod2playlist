@@ -221,7 +221,8 @@ def test_make_client_logs_in_when_no_token_file(client_env):
 
 
 @pytest.mark.parametrize("count, has_playlist, days", [
-    (0, False, 0), (66, True, 1), (67, True, 2), (66, False, 1), (1000, True, 15),
+    (0, False, 0), (0, True, 0), (66, True, 1), (67, True, 2), (133, True, 3), (200, True, 4),
+    (66, False, 1), (1000, True, 16),
 ])
 def test_days_needed(count, has_playlist, days):
     assert youtube.days_needed(count, has_playlist) == days

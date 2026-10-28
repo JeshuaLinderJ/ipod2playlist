@@ -29,8 +29,13 @@ def days_needed(song_count: int, has_playlist: bool) -> int:
     """Days of free quota needed. Worst case: assumes every song is found and added."""
     if song_count == 0:
         return 0
-    units = song_count * (SEARCH_COST + INSERT_COST) + (0 if has_playlist else CREATE_COST)
-    return math.ceil(units / DAILY_QUOTA)
+    # A song's search and add must both fit in one day, so count whole songs per day (never round down).
+    per_song = SEARCH_COST + INSERT_COST
+    first_day = (DAILY_QUOTA - (0 if has_playlist else CREATE_COST)) // per_song
+    later_days = DAILY_QUOTA // per_song
+    if song_count <= first_day:
+        return 1
+    return 1 + math.ceil((song_count - first_day) / later_days)
 
 
 class YouTubeService:
