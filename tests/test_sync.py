@@ -342,5 +342,22 @@ def test_dry_run_mentions_near_miss_but_records_nothing(tmp_path, capsys):
 
     sync([song], YouTubeService(FakeYouTube(catalog=[video])), Progress(path), "Mix", dry_run=True)
 
-    assert "(close match saved for review)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "(close match; would be saved for review)" in out
+    assert "(close match saved for review)" not in out
     assert not path.exists()
+
+
+def test_retry_missing_without_a_near_miss_clears_the_old_maybe(tmp_path):
+    video = {"id": {"videoId": "vid1"}, "snippet": {"title": "Oasis - Dont Look Back", "channelTitle": "Oasis"}}
+    song = Song(title="Don't Look Back in Anger", artist="Oasis", album="", path="/a.mp3")
+    progress = Progress(tmp_path / "progress.json")
+    fake = FakeYouTube(catalog=[video])
+    service = YouTubeService(fake)
+    sync([song], service, progress, "Mix")
+    assert progress.maybe("youtube", song.key) is not None
+
+    fake.catalog = []  # same playlist, but the search now finds nothing close
+    sync([song], service, progress, "Mix", retry_missing=True)
+
+    assert progress.maybe("youtube", song.key) is None

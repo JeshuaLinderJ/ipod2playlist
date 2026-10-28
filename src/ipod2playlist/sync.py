@@ -95,10 +95,18 @@ def sync(songs: list[Song], service, progress: Progress, playlist_name: str,
         if match is None:
             result.missing += 1
             close = near_miss(song, candidates)
-            note = " (close match saved for review)" if close else ""
+            if close is None:
+                note = ""
+            elif dry_run:
+                note = " (close match; would be saved for review)"
+            else:
+                note = " (close match saved for review)"
             print(f"- missing: {song.artist} - {song.title}{note}")
-            if close and not dry_run:  # remembered only; a human approves it later
-                progress.record_maybe(name, song.key, *close)
+            if not dry_run:
+                if close:  # remembered only; a human approves it later
+                    progress.record_maybe(name, song.key, *close)
+                else:  # a re-search found nothing close; drop the stale guess
+                    progress.clear_maybe(name, song.key)
         elif dry_run:
             result.added += 1
             print(f"would add: {song.artist} - {song.title}  ->  {match.title} by {match.artist}")
