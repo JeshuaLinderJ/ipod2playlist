@@ -107,3 +107,26 @@ def test_wrong_shape_file_raises_value_error(tmp_path, content):
     path.write_text(content)
     with pytest.raises(ValueError):
         Progress(path)
+
+
+def test_reset_service_removes_only_that_service(tmp_path):
+    progress = Progress(tmp_path / "p.json")
+    for service in ("spotify", "youtube"):
+        progress.set_playlist_id(service, f"{service}-id")
+        progress.record(service, "k", "added")
+
+    progress.reset_service("youtube")
+
+    assert progress.playlist_id("youtube") is None
+    assert progress.status("youtube", "k") is None
+    assert progress.playlist_id("spotify") == "spotify-id"
+    assert progress.status("spotify", "k") == "added"
+
+
+def test_reset_service_of_unknown_service_is_a_no_op(tmp_path):
+    progress = Progress(tmp_path / "p.json")
+    progress.set_playlist_id("spotify", "id")
+
+    progress.reset_service("youtube")
+
+    assert progress.playlist_id("spotify") == "id"

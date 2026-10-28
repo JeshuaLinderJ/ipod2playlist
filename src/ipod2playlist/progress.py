@@ -38,6 +38,10 @@ class Progress:
         songs = self._data["services"].get(service, {}).get("songs", {})
         return [key for key, value in songs.items() if value == status]
 
+    def reset_service(self, service: str) -> None:
+        """Forget one service's playlist and results; other services are untouched."""
+        self._data["services"].pop(service, None)
+
     def save(self) -> None:
         """Write to a sibling temp file, then atomically replace the real file."""
         tmp_path = self.path.with_name(self.path.name + ".tmp")

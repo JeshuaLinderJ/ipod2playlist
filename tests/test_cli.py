@@ -1,9 +1,15 @@
 import argparse
+import json
+from types import SimpleNamespace
 
 import pytest
-from fakes import FakeSpotify, FakeYouTube
+import requests
+from fakes import FakeSpotify, FakeYouTube, http_error
+from googleapiclient.errors import HttpError
+from google.auth.exceptions import RefreshError
+from spotipy.exceptions import SpotifyException, SpotifyOauthError
 
-from ipod2playlist import cli, library
+from ipod2playlist import cli, commands, library, youtube
 from ipod2playlist.progress import Progress
 from ipod2playlist.spotify import SpotifyService
 from ipod2playlist.youtube import YouTubeService
@@ -28,7 +34,7 @@ def work(tmp_path, monkeypatch):
 
 
 def use_services(monkeypatch, **services):
-    monkeypatch.setattr(cli, "_build_service", lambda name, args: services[name])
+    monkeypatch.setattr(commands, "build_service", lambda name, args: services[name])
 
 
 def test_scan_writes_deduped_songs_and_tsv(fake_ipod, work, capsys):
@@ -88,7 +94,7 @@ def test_missing_makes_no_api_calls(fake_ipod, work, monkeypatch):
     def fail(name, args):
         raise AssertionError("missing must not build a service")
 
-    monkeypatch.setattr(cli, "_build_service", fail)
+    monkeypatch.setattr(commands, "build_service", fail)
     cli.main(["missing", "--service", "youtube"])
 
     assert (work / "youtube_missing.tsv").read_text().strip() == "Title\tArtist\tAlbum\tPath"
@@ -108,7 +114,7 @@ def test_hint_when_every_song_fails(fake_ipod, work, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "0 added / 2 missing / 0 skipped / 3 failed" in out
-    assert "delete progress.json" in out
+    assert "--new-playlist" in out and "delete progress.json" not in out
 
 
 def test_no_hint_when_something_was_added(fake_ipod, work, monkeypatch, capsys):
@@ -171,7 +177,7 @@ def test_missing_youtube_client_secrets_exits_with_hint(tmp_path):
     args = argparse.Namespace(client_secrets=tmp_path / "nope.json", token=tmp_path / "token.json")
 
     with pytest.raises(SystemExit) as stopped:
-        cli._build_service("youtube", args)
+        commands.build_service("youtube", args)
 
     assert stopped.value.code == (
         f"{tmp_path / 'nope.json'} not found; download the OAuth client JSON (see README) "
@@ -218,3 +224,297 @@ def test_wrong_shape_progress_file_exits_cleanly(work, monkeypatch, content):
         cli.main(["missing", "--service", "spotify"])
 
     assert stopped.value.code == "Progress file progress.json is corrupt; fix or delete it."
+
+
+# --- flag wiring: each test fails if the flag were silently ignored ---
+
+def scan_and_spotify_fake(fake_ipod, monkeypatch, titles=ON_SPOTIFY):
+    cli.main(["scan", str(fake_ipod)])
+    fake = FakeSpotify([spotify_track(t, a) for t, a in titles])
+    use_services(monkeypatch, spotify=SpotifyService(fake))
+    return fake
+
+
+def test_songs_and_progress_flags_are_used(fake_ipod, work, monkeypatch):
+    fake = scan_and_spotify_fake(fake_ipod, monkeypatch)
+    hey_jude = [s for s in library.load_songs(work / "songs.json") if s.title == "Hey Jude"]
+    library.save_songs(hey_jude, work / "tiny.json")
+    (work / "progress.json").unlink(missing_ok=True)
+
+    cli.main(["spotify", "--songs", "tiny.json", "--progress", "tiny_progress.json"])
+
+    assert not (work / "progress.json").exists()
+    progress = Progress(work / "tiny_progress.json")
+    assert progress.keys_with_status("spotify", "added") == [hey_jude[0].key]
+    assert len(json.loads((work / "tiny_progress.json").read_text())["services"]["spotify"]["songs"]) == 1
+    assert fake.queries and all("Hey Jude" in query for query in fake.queries)
+
+
+def test_public_flag(fake_ipod, work, monkeypatch):
+    fake = scan_and_spotify_fake(fake_ipod, monkeypatch)
+    cli.main(["spotify", "--public"])
+    assert fake.playlists[0]["public"] is True
+
+    fake = scan_and_spotify_fake(fake_ipod, monkeypatch)
+    cli.main(["spotify", "--progress", "other.json"])
+    assert fake.playlists[0]["public"] is False
+
+    youtube_fake = FakeYouTube([youtube_video("Hey Jude", "The Beatles")])
+    use_services(monkeypatch, youtube=YouTubeService(youtube_fake))
+    cli.main(["youtube", "--public"])
+    assert youtube_fake.created[0]["privacyStatus"] == "public"
+
+
+def test_retry_missing_flag(fake_ipod, work, monkeypatch, capsys):
+    fake = scan_and_spotify_fake(fake_ipod, monkeypatch, [t for t in ON_SPOTIFY if t[0] != "So What"])
+    cli.main(["spotify"])
+    capsys.readouterr()
+
+    fake.catalog.append(spotify_track("So What", "Miles Davis"))
+    cli.main(["spotify"])
+    assert "0 added / 0 missing / 5 skipped / 0 failed" in capsys.readouterr().out
+
+    cli.main(["spotify", "--retry-missing"])
+    assert "1 added" in capsys.readouterr().out
+
+
+def test_new_playlist_forgets_only_that_service(fake_ipod, work, monkeypatch, capsys):
+    scan_and_spotify_fake(fake_ipod, monkeypatch)
+    cli.main(["spotify"])
+    youtube_fake = FakeYouTube()
+    use_services(monkeypatch, youtube=YouTubeService(youtube_fake))
+    cli.main(["youtube", "--only-spotify-missing"])
+    before = json.loads((work / "progress.json").read_text())["services"]
+    old_id = before["youtube"]["playlist_id"]
+    capsys.readouterr()
+
+    cli.main(["youtube", "--only-spotify-missing", "--new-playlist"])
+
+    out = capsys.readouterr().out
+    assert "Starting a new youtube playlist: forgot the saved youtube playlist and results in progress.json" in out
+    after = json.loads((work / "progress.json").read_text())["services"]
+    assert after["spotify"] == before["spotify"]
+    assert after["youtube"]["playlist_id"] not in (None, old_id)
+    assert len(youtube_fake.created) == 2
+    # The Spotify-missing songs are still selected after the reset.
+    progress = Progress(work / "progress.json")
+    assert sorted(progress.keys_with_status("youtube", "missing")) == \
+        sorted(progress.keys_with_status("spotify", "missing"))
+    assert len(progress.keys_with_status("youtube", "missing")) == 2
+
+
+def test_client_secrets_and_token_reach_make_client(work, monkeypatch):
+    (work / "songs.json").write_text('[{"title": "T", "artist": "A", "album": "B", "path": "p.mp3"}]')
+    secrets, token = work / "my_secrets.json", work / "my_token.json"
+    secrets.write_text("{}")
+    token.write_text("{}")
+    seen = []
+
+    def fake_make_client(secrets_file, token_file):
+        seen.append((secrets_file, token_file))
+        return FakeYouTube()
+
+    monkeypatch.setattr(youtube, "make_client", fake_make_client)
+    cli.main(["youtube", "--client-secrets", str(secrets), "--token", str(token)])
+
+    assert seen == [(secrets, token)]
+
+
+def test_scan_rejects_progress_flag(fake_ipod, work):
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["scan", str(fake_ipod), "--progress", "x.json"])
+    assert stopped.value.code == 2
+
+
+def test_playlist_gone_exits_3_and_keeps_progress(fake_ipod, work, monkeypatch, capsys):
+    cli.main(["scan", str(fake_ipod)])
+    progress = Progress(work / "progress.json")
+    progress.set_playlist_id("youtube", "deleted-online")
+    progress.save()
+    before = (work / "progress.json").read_bytes()
+    use_services(monkeypatch, youtube=YouTubeService(FakeYouTube()))
+
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["youtube"])
+
+    assert stopped.value.code == 3
+    err = capsys.readouterr().err
+    assert "no longer exists" in err and "--new-playlist" in err
+    assert (work / "progress.json").read_bytes() == before
+
+
+# --- error boundary ---
+
+def run_expecting_exit(monkeypatch, work, service_name, service):
+    (work / "songs.json").write_text('[{"title": "T", "artist": "A", "album": "B", "path": "p.mp3"}]')
+    use_services(monkeypatch, **{service_name: service})
+    with pytest.raises(SystemExit) as stopped:
+        cli.main([service_name])
+    return stopped.value.code
+
+
+def raising_build(error):
+    def build(name, args):
+        raise error
+    return build
+
+
+class FailingCreate(SpotifyService):
+    def __init__(self, error):
+        super().__init__(FakeSpotify())
+        self.error = error
+
+    def create_playlist(self, name, public):
+        raise self.error
+
+
+class FailingYouTubeCreate(YouTubeService):
+    def __init__(self, error):
+        super().__init__(FakeYouTube())
+        self.error = error
+
+    def create_playlist(self, name, public):
+        raise self.error
+
+
+def test_spotify_login_not_set_up(work, monkeypatch):
+    (work / "songs.json").write_text('[{"title": "T", "artist": "A", "album": "B", "path": "p.mp3"}]')
+    error = SpotifyOauthError("No client_id. Pass it or set a SPOTIPY_CLIENT_ID environment variable.")
+    monkeypatch.setattr(commands, "build_service", raising_build(error))
+
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["spotify"])
+
+    assert stopped.value.code == (
+        "Spotify login is not set up: No client_id. Pass it or set a SPOTIPY_CLIENT_ID environment variable. "
+        "Check the .env file in this folder (README step 2)."
+    )
+
+
+def test_spotify_refused_request(work, monkeypatch):
+    msg = "Check settings on developer.spotify.com/dashboard, the user may not be registered."
+    code = run_expecting_exit(monkeypatch, work, "spotify", FailingCreate(SpotifyException(403, -1, msg)))
+
+    assert code == (
+        "Spotify refused the request (HTTP 403): Check settings on developer.spotify.com/dashboard, "
+        "the user may not be registered. If it says the user may not be registered, add this Spotify "
+        "account to your app's users in the Spotify Developer Dashboard (README step 2)."
+    )
+
+
+def test_spotify_refused_keeps_only_the_last_line(work, monkeypatch):
+    msg = "https://api.spotify.com/v1/users/x/playlists:\n Forbidden."
+    code = run_expecting_exit(monkeypatch, work, "spotify", FailingCreate(SpotifyException(403, -1, msg)))
+
+    assert "(HTTP 403): Forbidden. If it says" in code
+    assert "https" not in code and "\n" not in code
+
+
+def test_youtube_refused_request(work, monkeypatch):
+    code = run_expecting_exit(monkeypatch, work, "youtube",
+                              FailingYouTubeCreate(http_error(403, "youtubeSignupRequired")))
+
+    assert code == "YouTube refused the request (HTTP 403): boom. Check the YouTube setup (README step 3)."
+
+
+def test_youtube_refused_reason_ending_in_a_period_has_no_double_period(work, monkeypatch):
+    body = {"error": {"code": 403, "message": "The caller does not have permission."}}
+    error = HttpError(SimpleNamespace(status=403, reason="Forbidden"), json.dumps(body).encode())
+    code = run_expecting_exit(monkeypatch, work, "youtube", FailingYouTubeCreate(error))
+
+    assert code == ("YouTube refused the request (HTTP 403): The caller does not have permission. "
+                    "Check the YouTube setup (README step 3).")
+    assert ".." not in code
+
+
+def test_youtube_login_failed(work, monkeypatch):
+    (work / "songs.json").write_text('[{"title": "T", "artist": "A", "album": "B", "path": "p.mp3"}]')
+    monkeypatch.setattr(commands, "build_service", raising_build(RefreshError("invalid_grant")))
+
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["youtube"])
+
+    assert stopped.value.code == (
+        "YouTube login failed: invalid_grant. Delete the saved login (youtube_token.json, or the file given "
+        "with --token) and re-run to log in again (README step 3)."
+    )
+
+
+def test_network_error_gets_one_plain_line(work, monkeypatch):
+    class Offline(SpotifyService):
+        def playlist_exists(self, playlist_id):
+            raise requests.exceptions.ConnectionError("Max retries exceeded")
+
+    (work / "progress.json").write_text('{"services": {"spotify": {"playlist_id": "p1", "songs": {}}}}')
+    code = run_expecting_exit(monkeypatch, work, "spotify", Offline(FakeSpotify()))
+
+    assert code == ("Could not reach the service (Max retries exceeded). Check the internet connection "
+                    "and re-run the same command; progress is saved.")
+
+
+def test_malformed_client_secrets_exit_cleanly(work, monkeypatch):
+    (work / "songs.json").write_text('[{"title": "T", "artist": "A", "album": "B", "path": "p.mp3"}]')
+    (work / "client_secrets.json").write_text("{bad")
+
+    def broken(secrets_file, token_file):
+        raise ValueError("Expecting property name")
+
+    monkeypatch.setattr(youtube, "make_client", broken)
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["youtube"])
+
+    assert stopped.value.code == (
+        "Could not read client_secrets.json or youtube_token.json (Expecting property name). Download the "
+        "Desktop-app OAuth client again (README step 3), or delete youtube_token.json to log in again."
+    )
+
+
+def test_ctrl_c_stops_with_exit_130(fake_ipod, work, monkeypatch, capsys):
+    cli.main(["scan", str(fake_ipod)])
+
+    class Interrupted(SpotifyService):
+        def search(self, song):
+            raise KeyboardInterrupt
+
+    use_services(monkeypatch, spotify=Interrupted(FakeSpotify()))
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["spotify"])
+
+    assert stopped.value.code == 130
+    assert "Stopped. Progress is saved" in capsys.readouterr().err
+
+
+# --- M5: nothing to process means no login ---
+
+def never_built(name, args):
+    raise AssertionError("no service should be built when there is nothing to process")
+
+
+def test_only_spotify_missing_before_spotify_ran(fake_ipod, work, monkeypatch, capsys):
+    cli.main(["scan", str(fake_ipod)])
+    monkeypatch.setattr(commands, "build_service", never_built)
+    capsys.readouterr()
+
+    cli.main(["youtube", "--only-spotify-missing"])
+
+    out = capsys.readouterr().out
+    assert "No songs to process." in out
+    assert "run `ipod2playlist spotify` first" in out
+    assert not (work / "progress.json").exists()
+
+
+def test_only_spotify_missing_when_spotify_found_everything(fake_ipod, work, monkeypatch, capsys):
+    cli.main(["scan", str(fake_ipod)])
+    tagged = [s for s in library.load_songs(work / "songs.json") if s.title in ("Hey Jude", "So What")]
+    library.save_songs(tagged, work / "songs.json")
+    everything = [spotify_track(s.title, s.artist) for s in tagged]
+    use_services(monkeypatch, spotify=SpotifyService(FakeSpotify(everything)))
+    cli.main(["spotify"])
+    monkeypatch.setattr(commands, "build_service", never_built)
+    capsys.readouterr()
+
+    cli.main(["youtube", "--only-spotify-missing"])
+
+    out = capsys.readouterr().out
+    assert "No songs to process. Spotify found every song." in out
+    assert "first" not in out
