@@ -3,6 +3,8 @@ import csv
 import pytest
 from fakes import FakeSpotify
 
+from fakes import http_error
+
 from ipod2playlist import cli, commands, review
 from ipod2playlist.errors import PlaylistGone
 from ipod2playlist.library import Song, save_songs
@@ -200,4 +202,94 @@ def test_apply_review_through_cli_prints_summary(work, monkeypatch, capsys):
 
     cli.main(["apply-review", "--service", "spotify"])
 
-    assert capsys.readouterr().out.splitlines()[-1] == "1 added / 1 rejected / 0 skipped"
+    assert capsys.readouterr().out.splitlines()[-1] == "1 added / 1 rejected / 0 skipped / 0 failed"
+
+
+def three_guessed(work):
+    songs = [Song(f"T{i}", "A", "B", f"{i}.mp3") for i in range(3)]
+    progress = Progress(work / "progress.json")
+    progress.set_playlist_id("spotify", "playlist1")
+    for i, song in enumerate(songs):
+        progress.record("spotify", song.key, "missing")
+        progress.record_maybe("spotify", song.key, Candidate(f"spotify:track:ID{i}", f"T{i}", "A"), 70)
+    progress.save()
+    return songs, progress
+
+
+class FlakyService:
+    """Wraps the fake service; add() fails for the ids in `bad`."""
+    name = "spotify"
+
+    def __init__(self, inner, bad):
+        self.inner, self.bad = inner, set(bad)
+
+    def playlist_exists(self, playlist_id):
+        return self.inner.playlist_exists(playlist_id)
+
+    def add(self, playlist_id, item_id):
+        if item_id in self.bad:
+            raise http_error(404, "videoNotFound")
+        self.inner.add(playlist_id, item_id)
+
+
+def test_one_stale_id_does_not_block_the_rest_and_rerun_retries_only_it(work, capsys):
+    songs, progress = three_guessed(work)
+    fake, service = fake_service()
+    write_csv(work / "r.csv", [row("y", s.key) for s in songs])
+
+    result = review.apply_file(work / "r.csv", FlakyService(service, ["spotify:track:ID1"]), progress)
+
+    assert (result.added, result.failed) == (2, 1)
+    assert "! failed: A - T1" in capsys.readouterr().out
+    assert review.apply_summary(result).endswith("/ 1 failed")
+    again = review.apply_file(work / "r.csv", service, Progress(work / "progress.json"))
+    assert (again.added, again.skipped) == (1, 2)
+    assert fake.playlists[0]["items"] == ["spotify:track:ID0", "spotify:track:ID2", "spotify:track:ID1"]
+
+
+def test_three_consecutive_failures_reraise(work):
+    songs, progress = three_guessed(work)
+    _, service = fake_service()
+    bad = [f"spotify:track:ID{i}" for i in range(3)]
+    write_csv(work / "r.csv", [row("y", s.key) for s in songs])
+    with pytest.raises(Exception):
+        review.apply_file(work / "r.csv", FlakyService(service, bad), progress)
+
+
+def test_non_utf8_file_gets_a_clear_message(tmp_path):
+    path = tmp_path / "r.csv"
+    path.write_bytes("Add? (y/n),Title,Key\ny,Björk,k\n".encode("cp1252"))
+    with pytest.raises(SystemExit) as stopped:
+        review.read_decisions(path)
+    assert str(stopped.value) == (f"{path} is not saved as UTF-8. In Excel or Numbers, export it as "
+                                  "\"CSV UTF-8\" and run apply-review again.")
+
+
+def test_file_without_key_columns_is_refused(tmp_path):
+    path = tmp_path / "r.csv"
+    path.write_text("Title,Artist\nx,y\n")
+    with pytest.raises(SystemExit) as stopped:
+        review.read_decisions(path)
+    assert str(stopped.value) == (f"{path} has no \"Key\" and \"Add? (y/n)\" columns; "
+                                  "run ipod2playlist review again to get a fresh file.")
+
+
+def test_formula_text_is_neutralised_in_the_csv_but_apply_still_works(work):
+    song = Song("=HYPERLINK(\"http://x\")", "+Artist", "@Alb", "a.mp3")
+    progress = Progress(work / "progress.json")
+    progress.set_playlist_id("spotify", "playlist1")
+    progress.record("spotify", song.key, "missing")
+    progress.record_maybe("spotify", song.key, Candidate("spotify:track:G", "=HYPERLINK(\"http://evil\")", "-x"), 70)
+    progress.save()
+
+    review.write_reports([song], progress, "spotify", work)
+
+    written = list(csv.DictReader(open(work / "spotify_review.csv", encoding="utf-8-sig")))[0]
+    assert written["Title"] == "'=HYPERLINK(\"http://x\")" and written["Artist"] == "'+Artist"
+    assert written["Album"] == "'@Alb" and written["Best guess"].startswith("'=HYPERLINK(")
+    assert written["Key"] == song.key
+    text = (work / "spotify_review.csv").read_text(encoding="utf-8-sig").replace("\n,", "\ny,", 1)
+    (work / "marked.csv").write_text(text, encoding="utf-8")
+    fake, service = fake_service()
+    assert review.apply_file(work / "marked.csv", service, progress).added == 1
+    assert fake.playlists[0]["items"] == ["spotify:track:G"]
