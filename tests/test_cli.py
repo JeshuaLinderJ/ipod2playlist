@@ -43,22 +43,23 @@ def test_scan_writes_deduped_songs_and_tsv(fake_ipod, work, capsys):
 def test_end_to_end_spotify_then_youtube_with_quota_resume(fake_ipod, work, monkeypatch, capsys):
     cli.main(["scan", str(fake_ipod)])
     songs = library.load_songs(work / "songs.json")
-    on_spotify = {title for title, _ in ON_SPOTIFY}
-    not_on_spotify = [s for s in songs if s.title not in on_spotify]
-    assert len(not_on_spotify) == 2
+    not_on_spotify = [s for s in songs if s.title != "Hey Jude"]
+    tagged = [s for s in not_on_spotify if s.title in ("Paranoid Android", "So What")]
+    assert len(not_on_spotify) == 4 and len(tagged) == 2
 
-    spotify_fake = FakeSpotify([spotify_track(t, a) for t, a in ON_SPOTIFY])
+    spotify_fake = FakeSpotify([spotify_track("Hey Jude", "The Beatles")])
     use_services(monkeypatch, spotify=SpotifyService(spotify_fake))
     cli.main(["spotify", "--name", "Mix"])
-    assert "3 added / 2 missing / 0 skipped / 0 failed" in capsys.readouterr().out
+    assert "1 added / 4 missing / 0 skipped / 0 failed" in capsys.readouterr().out
     assert [p["name"] for p in spotify_fake.playlists] == ["Mix"]
 
     cli.main(["missing", "--service", "spotify"])
     report = (work / "spotify_missing.tsv").read_text().splitlines()
     assert sorted(line.split("\t")[0] for line in report[1:]) == sorted(s.title for s in not_on_spotify)
 
-    catalog = [youtube_video(s.title, s.artist) for s in not_on_spotify]
-    # First run: playlist create + search + add for song one succeed (3 calls), then quota.
+    catalog = [youtube_video(s.title, s.artist) for s in tagged]
+    # First run: playlist create + search + add for the first tagged song succeed (3 calls), then
+    # quota on the second search.
     quota_fake = FakeYouTube(catalog, fail_after=3)
     use_services(monkeypatch, youtube=YouTubeService(quota_fake))
     with pytest.raises(SystemExit) as stopped:
@@ -72,13 +73,13 @@ def test_end_to_end_spotify_then_youtube_with_quota_resume(fake_ipod, work, monk
     finishing_fake.created = quota_fake.created  # same playlist on the fake "server"
     use_services(monkeypatch, youtube=YouTubeService(finishing_fake))
     cli.main(["youtube", "--only-spotify-missing"])
-    assert "1 added / 0 missing / 1 skipped / 0 failed" in capsys.readouterr().out
+    assert "1 added / 2 missing / 1 skipped / 0 failed" in capsys.readouterr().out
 
     assert len(finishing_fake.created) == 1 and len(finishing_fake.created[0]["items"]) == 2
     progress = Progress(work / "progress.json")
-    assert sorted(progress.keys_with_status("youtube", "added")) == sorted(s.key for s in not_on_spotify)
+    assert sorted(progress.keys_with_status("youtube", "added")) == sorted(s.key for s in tagged)
     assert sorted(progress.keys_with_status("spotify", "missing")) == sorted(s.key for s in not_on_spotify)
-    assert len(progress.keys_with_status("spotify", "added")) == 3
+    assert len(progress.keys_with_status("spotify", "added")) == 1
 
 
 def test_missing_makes_no_api_calls(fake_ipod, work, monkeypatch):

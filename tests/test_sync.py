@@ -1,7 +1,8 @@
 import pytest
 from fakes import FakeSpotify, FakeYouTube
 
-from ipod2playlist.library import Song
+from ipod2playlist.errors import PlaylistGone
+from ipod2playlist.library import UNKNOWN_ARTIST, Song
 from ipod2playlist.progress import Progress
 from ipod2playlist.spotify import SpotifyService
 from ipod2playlist.sync import SyncResult, sync
@@ -128,3 +129,83 @@ def test_transient_error_on_one_song_is_counted_and_left_unrecorded(tmp_path, ca
     assert result == SyncResult(added=3, missing=0, skipped=0, failed=1)
     assert progress.status("spotify", songs()[1].key) is None
     assert "Bravo" in capsys.readouterr().out
+
+
+def test_youtube_playlist_deleted_since_last_run_stops_with_zero_searches(tmp_path):
+    path = tmp_path / "progress.json"
+    first = FakeYouTube(catalog=[youtube_video(t) for t in TITLES])
+    sync(songs(["Alpha"]), YouTubeService(first), Progress(path), "My Mix")
+    first.delete_playlist(Progress(path).playlist_id("youtube"))
+    first.queries.clear()
+
+    with pytest.raises(PlaylistGone):
+        sync(songs(), YouTubeService(first), Progress(path), "My Mix")
+
+    assert first.queries == []
+    assert first.created == []  # no replacement playlist
+    assert Progress(path).status("youtube", songs()[1].key) is None
+
+
+def test_spotify_playlist_unfollowed_stops_with_zero_searches(tmp_path):
+    service, fake = spotify_service()
+    path = tmp_path / "progress.json"
+    sync(songs(["Alpha"]), service, Progress(path), "My Mix")
+    fake.unfollow(Progress(path).playlist_id("spotify"))
+    fake.queries.clear()
+
+    with pytest.raises(PlaylistGone):
+        sync(songs(), service, Progress(path), "My Mix")
+
+    assert fake.queries == []
+    assert len(fake.playlists) == 1
+
+
+class DeletedOnSecondAdd(YouTubeService):
+    """The playlist is deleted on youtube.com while the run is going."""
+
+    adds = 0
+
+    def add(self, playlist_id, item_id):
+        self.adds += 1
+        if self.adds == 2:
+            raise PlaylistGone("youtube")
+        super().add(playlist_id, item_id)
+
+
+def test_playlist_deleted_mid_run_stops_instead_of_failing_every_song(tmp_path):
+    path = tmp_path / "progress.json"
+    fake = FakeYouTube(catalog=[youtube_video(t) for t in TITLES])
+
+    with pytest.raises(PlaylistGone):
+        sync(songs(), DeletedOnSecondAdd(fake), Progress(path), "My Mix")
+
+    assert len(fake.queries) == 2  # swallowing PlaylistGone as a per-song failure would search all 4
+    saved = Progress(path)
+    assert [saved.status("youtube", s.key) for s in songs()] == ["added", None, None, None]
+
+
+def test_empty_song_list_touches_nothing(tmp_path):
+    service, fake = spotify_service()
+    path = tmp_path / "progress.json"
+
+    result = sync([], service, Progress(path), "My Mix")
+
+    assert result == SyncResult(0, 0, 0, 0)
+    assert fake.playlists == []
+    assert not path.exists()
+
+
+def test_songs_without_an_artist_are_recorded_missing_and_not_searched(tmp_path, capsys):
+    service, fake = spotify_service()
+    untagged = [
+        Song(title="Alpha", artist=UNKNOWN_ARTIST, album="", path="/a.mp3"),
+        Song(title="Bravo", artist="", album="", path="/b.mp3"),
+    ]
+    progress = Progress(tmp_path / "progress.json")
+
+    result = sync(untagged, service, progress, "My Mix")
+
+    assert result == SyncResult(added=0, missing=2, skipped=0, failed=0)
+    assert fake.queries == []
+    assert [progress.status("spotify", s.key) for s in untagged] == ["missing", "missing"]
+    assert "not searched" in capsys.readouterr().out
