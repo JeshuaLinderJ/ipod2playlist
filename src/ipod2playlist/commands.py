@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 
-from ipod2playlist import doctor, library, messages, playlist, review, spotify, youtube
+from ipod2playlist import doctor, itunesdb, library, messages, playlist, review, spotify, youtube
 from ipod2playlist.progress import Progress
 from ipod2playlist.scan import scan
 from ipod2playlist.spotify import SpotifyService
@@ -46,11 +46,19 @@ def run_scan(args) -> None:
     if not args.songs.parent.is_dir():
         raise SystemExit(f"Folder {args.songs.parent} does not exist; create it or choose another --songs path.")
     found = scan(args.root)
+    if args.itunesdb:
+        tracks, playlists = itunesdb.read_or_warn(args.root)
+        if tracks:  # empty means the database was unreadable (already warned): plain scan
+            found, by_key, named = itunesdb.scan_with_db(found, args.root, tracks, playlists)
     songs = library.dedupe(found)
     library.save_songs(songs, args.songs)
     library.write_tsv(songs, args.songs.with_suffix(".tsv"))
     print(f"Found {len(found)} songs, removed {len(found) - len(songs)} duplicates; "
           f"wrote {len(songs)} to {args.songs} and {args.songs.with_suffix('.tsv')}")
+    if args.itunesdb and tracks:
+        path = args.songs.with_name("ipod_playlists.json")
+        itunesdb.save_playlists(by_key, path)
+        print(f"Read the iPod's database: {named} untagged songs named, {len(by_key)} playlists saved to {path}")
 
 
 def run_playlist(args) -> None:

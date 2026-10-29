@@ -43,6 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan_cmd = add_command("scan", "read an iPod's songs into songs.json and songs.tsv", commands.run_scan)
     scan_cmd.add_argument("root", type=Path, help="the iPod's mount point, e.g. /Volumes/IPOD")
+    scan_cmd.add_argument("--itunesdb", action="store_true",
+                          help="also read the iPod's own database (names for untagged songs, ratings, play counts, "
+                               "playlists); needs the itunesdb extra")
 
     spotify_cmd = add_command("spotify", "add the songs to a spotify playlist (resumable)", commands.run_playlist)
     add_playlist_flags(spotify_cmd)

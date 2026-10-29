@@ -518,8 +518,14 @@ dependencies = [
     { name = "spotipy" },
 ]
 
+[package.optional-dependencies]
+itunesdb = [
+    { name = "pygpod" },
+]
+
 [package.dev-dependencies]
 dev = [
+    { name = "pygpod" },
     { name = "pytest" },
 ]
 
@@ -528,13 +534,18 @@ requires-dist = [
     { name = "google-api-python-client", specifier = ">=2.201.0" },
     { name = "google-auth-oauthlib", specifier = ">=1.5.0" },
     { name = "mutagen", specifier = ">=1.48.1" },
+    { name = "pygpod", marker = "extra == 'itunesdb'", specifier = ">=0.2.3,<0.3" },
     { name = "python-dotenv", specifier = ">=1.2.4" },
     { name = "rapidfuzz", specifier = ">=3.14.5" },
     { name = "spotipy", specifier = ">=2.26.0" },
 ]
+provides-extras = ["itunesdb"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.2.0" }]
+dev = [
+    { name = "pygpod", specifier = ">=0.2.3,<0.3" },
+    { name = "pytest", specifier = ">=9.2.0" },
+]
 
 [[package]]
 name = "mutagen"
@@ -664,6 +675,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/49/2e/ced460408999b33da6b31b0021b0f37d329e202d4169aeb164493778f25b/pygments-2.21.0.tar.gz", hash = "sha256:610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c", size = 5005329 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/71/46/17f022dd3e953bf20a04a028a21ec746d942f8d2af30fa0f124fa0e6a684/pygments-2.21.0-py3-none-any.whl", hash = "sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9", size = 1250147 },
+]
+
+[[package]]
+name = "pygpod"
+version = "0.2.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/39/d3/0d4603a1691d5a262ee5e807de3104509cbbf6ddff8cbff877e7cf784969/pygpod-0.2.3.tar.gz", hash = "sha256:61539b18820ea0161fc3bde1fc627bb1aab931695c1aa870c764b51af313a7d1", size = 453617 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6e/81/c7c6d6d7aa0621baee1d8e7bd87266cd97416c154fa71dbe573e56861be9/pygpod-0.2.3-py3-none-any.whl", hash = "sha256:a7c8ed77bc9ff58260d653e93cfb7d138d2f20ecb5c4109089a0ac983276e355", size = 249954 },
 ]
 
 [[package]]

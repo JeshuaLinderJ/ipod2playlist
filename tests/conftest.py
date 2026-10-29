@@ -1,5 +1,7 @@
 from pathlib import Path
+import hashlib
 import shutil
+import warnings
 
 import mutagen
 import pytest
@@ -42,4 +44,38 @@ def fake_ipod(tmp_path) -> Path:
         junk = root / rel
         junk.parent.mkdir(parents=True, exist_ok=True)
         junk.write_bytes(b"\x00junk\xff" * 50)
+    return root
+
+
+def snapshot(root: Path) -> dict[str, tuple[int, int, str]]:
+    """Every file under root -> (size, mtime_ns, sha256), to prove nothing was written."""
+    result = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            info = path.stat()
+            result[path.relative_to(root).as_posix()] = (
+                info.st_size, info.st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest())
+    return result
+
+
+@pytest.fixture
+def fake_ipod_with_db(fake_ipod) -> Path:
+    """fake_ipod plus a real iTunesDB written by pygpod (the only place the tests write one)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        pygpod = pytest.importorskip("pygpod")
+    root = fake_ipod
+    (root / "iPod_Control/iTunes/iTunesDB").unlink()
+    pygpod.init_ipod(str(root))
+    db = pygpod.Database(str(root))
+    music = root / "iPod_Control/Music"
+    wav = db.add_track(str(music / "F05/UVWX.wav"), copy=False, title="Wish You Were Here",
+                       artist="Pink Floyd", album="Wish You Were Here", rating=80, play_count=12)
+    mp3 = db.add_track(str(music / "F00/ABCD.mp3"), copy=False, title="Hey Jude (iTunes)",
+                       play_count=40, rating=100)
+    db.add_track(str(music / "F01/EFGH.m4a"), copy=False, play_count=3)
+    road_trip = db.create_playlist("Road Trip")
+    db.add_track_to_playlist(road_trip, wav)
+    db.add_track_to_playlist(road_trip, mp3)
+    db.save()
     return root

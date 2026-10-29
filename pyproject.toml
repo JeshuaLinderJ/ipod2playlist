@@ -16,6 +16,11 @@ dependencies = [
 [project.scripts]
 ipod2playlist = "ipod2playlist.cli:main"
 
+[project.optional-dependencies]
+itunesdb = [
+    "pygpod>=0.2.3,<0.3",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -28,5 +33,6 @@ testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
+    "pygpod>=0.2.3,<0.3",
     "pytest>=9.2.0",
 ]

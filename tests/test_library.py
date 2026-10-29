@@ -1,4 +1,5 @@
 import csv
+import json
 
 import pytest
 
@@ -69,5 +70,18 @@ def test_load_songs_coerces_null_and_numbers(tmp_path):
 def test_load_songs_rejects_wrong_shapes(tmp_path, content):
     path = tmp_path / "songs.json"
     path.write_text(content)
+    with pytest.raises(TypeError):
+        load_songs(path)
+
+
+def test_load_songs_rating_and_plays(tmp_path):
+    path = tmp_path / "songs.json"
+    base = {"title": "a", "artist": "b", "album": "c", "path": "d"}
+    path.write_text(json.dumps([base]))
+    assert load_songs(path)[0].rating == load_songs(path)[0].plays == 0  # a v1.5 file
+    path.write_text(json.dumps([{**base, "rating": 4, "plays": 2}]))
+    song = load_songs(path)[0]
+    assert (song.rating, song.plays) == (4, 2)
+    path.write_text(json.dumps([{**base, "rating": "x"}]))
     with pytest.raises(TypeError):
         load_songs(path)

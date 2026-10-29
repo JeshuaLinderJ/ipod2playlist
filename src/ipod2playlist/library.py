@@ -18,6 +18,8 @@ class Song:
     artist: str
     album: str
     path: str
+    rating: int = 0  # 0-5 stars, from the iPod's database
+    plays: int = 0   # play count, from the iPod's database
 
     @property
     def key(self) -> str:
@@ -59,7 +61,11 @@ def load_songs(path: Path) -> list[Song]:
     for item in items:
         if not isinstance(item, dict):
             raise TypeError("each song must be a JSON object")
-        songs.append(Song(**{key: _text(value) for key, value in item.items()}))
+        for number in ("rating", "plays"):
+            if number in item and not isinstance(item[number], int):
+                raise TypeError(f"{number} must be a whole number")
+        songs.append(Song(**{key: value if key in ("rating", "plays") else _text(value)
+                             for key, value in item.items()}))
     return songs
 
 
