@@ -13,8 +13,8 @@ lands there too, and is git-ignored.
 ### 1. Get the code
 
 ```
-git clone https://github.com/JeshuaLinderJ/ipod-playlist-scripts.git
-cd ipod-playlist-scripts
+git clone https://github.com/JeshuaLinderJ/ipod2playlist.git
+cd ipod2playlist
 uv run ipod2playlist --help
 ```
 
