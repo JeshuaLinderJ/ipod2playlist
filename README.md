@@ -298,6 +298,25 @@ Files the tool writes in the current folder, all git-ignored: `songs.json`, `son
   That is fine on a Mac; some non-Mac players may not match them.
 - Python 3.10 works, but Google's library prints a warning; Python 3.11 or newer avoids it.
 
+## Known issues
+
+Small problems found in review and not fixed yet. None of them adds a wrong song, loses progress or writes
+to the iPod. Each one is tracked as an issue on GitHub.
+
+- If an error has no file name attached (for example, the disk is full), the message reads
+  `Could not write None (...)` instead of naming the file.
+- When `apply-review` finds the playlist is gone, its suggested `--new-playlist` command leaves out any
+  `--progress` or `--token` option you used. Add them back yourself.
+- Running any command except `doctor` from a folder that contains a copied `iPod_Control` folder, or from a
+  folder below one, is refused as "the iPod". Move the copy out of your working folder and run from elsewhere.
+- `export-csv` prints its "Wrote …" lines only after every file is written, so if a later file fails you
+  don't see which earlier files were written.
+- In `backup`, a different file with the same name, size and a timestamp within 2 seconds of an iPod song
+  counts as already backed up. This is very unlikely in practice.
+- Not yet checked against the real services or a real iPod: whether Spotify reports a playlist you deleted
+  (unfollowed) as gone, `--itunesdb` on real hardware, and whether Soundiiz/TuneMyMusic accept the CSV
+  columns. The manual checks below cover these.
+
 ## Manual checks before a release
 
 These need a real iPod and real accounts, so no automated test covers them:
