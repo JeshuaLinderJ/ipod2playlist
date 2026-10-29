@@ -14,3 +14,9 @@ progress.json
 ipod_song_list.*
 spotify_missing_songs.txt
 tiny*.json
+ipod_playlists.json
+*_review.csv
+*_review.html
+library.csv
+*_missing.csv
+playlist_*.csv

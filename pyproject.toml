@@ -1,6 +1,6 @@
 [project]
 name = "ipod2playlist"
-version = "1.5.0"
+version = "1.7.0"
 description = "Turn an iPod Classic's music into Spotify/YouTube playlists"
 readme = "README.md"
 requires-python = ">=3.10"
