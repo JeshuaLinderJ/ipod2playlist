@@ -5,6 +5,7 @@ import pytest
 
 from conftest import FIXTURES, snapshot
 import errno
+import sys
 import hashlib
 import os
 import unicodedata
@@ -98,6 +99,7 @@ def test_same_size_different_file_is_not_taken_for_ours(fake_ipod, tmp_path):
     target = backup.plan(songs, dest)[0][1]
     target.parent.mkdir(parents=True)
     target.write_bytes(b"x" * Path(songs[0].path).stat().st_size)
+    os.utime(target, (0, 0))  # a stranger's old file; the 2 s window must not take it for ours
     backup.backup(songs, fake_ipod, dest)
     assert target.read_bytes().startswith(b"xxxx")
     assert (target.parent / "Hey Jude (2).mp3").read_bytes() == Path(songs[0].path).read_bytes()
@@ -339,3 +341,100 @@ def test_playlist_uses_the_spelling_on_disk(fake_ipod, tmp_path):
         for part in Path(line).parts:
             assert part in os.listdir(folder)
             folder = folder / part
+
+
+def test_rename_that_resets_mtime_like_fat_does_not_cause_recopies(fake_ipod, tmp_path, monkeypatch):
+    dest = tmp_path / "backup"
+    real_rename = os.rename
+
+    def msdos_rename(src, dst):
+        real_rename(src, dst)
+        os.utime(dst, (1_900_000_000, 1_900_000_000))  # the macOS msdos driver sets "now" on rename
+
+    monkeypatch.setattr(os, "rename", msdos_rename)
+    run(fake_ipod, dest)
+    result, _ = backup.backup(scan(fake_ipod), fake_ipod, dest)
+    assert (result.copied, result.present, result.conflicts) == (0, 6, 0)
+    assert len(list(dest.rglob("*.mp3"))) == 3
+
+
+def test_fresh_destination_playlist_matches_disk_spelling(fake_ipod, tmp_path):
+    music = fake_ipod / "iPod_Control/Music"
+    other = music / "F09/CASE.mp3"
+    other.parent.mkdir()
+    shutil.copy(music / "F00/ABCD.mp3", other)
+    audio = mutagen.File(other, easy=True)
+    audio.update({"title": ["Other"], "artist": ["the beatles"], "album": ["past masters"]})
+    audio.save()
+    dest = tmp_path / "backup"
+    _, present = backup.backup(scan(fake_ipod), fake_ipod, dest)
+    m3u8.write_playlists(present, fake_ipod, dest, {})
+    lines = [ln for ln in (dest / "My iPod.m3u8").read_text(encoding="utf-8").splitlines() if ln.startswith("./")]
+    for line in lines:
+        folder = dest
+        for part in Path(line).parts:
+            assert part in os.listdir(folder)
+            folder = folder / part
+    assert not any(ln.startswith("./the beatles") for ln in lines)
+
+
+def fail_second_file(monkeypatch, how):
+    real, calls = shutil.copy2, []
+
+    def flaky(source, target):
+        calls.append(source)
+        if len(calls) == 2:
+            if how == "short":
+                Path(target).write_bytes(b"short")
+                return target
+            raise OSError(errno.EIO, "Input/output error")
+        return real(source, target)
+
+    monkeypatch.setattr(backup.shutil, "copy2", flaky)
+
+
+def test_incomplete_copy_is_a_per_file_failure(fake_ipod, tmp_path, monkeypatch, capsys):
+    fail_second_file(monkeypatch, "short")
+    dest = tmp_path / "backup"
+    with pytest.raises(SystemExit) as stop:
+        run(fake_ipod, dest)
+    assert str(stop.value) == "1 files could not be copied; run the same backup again to retry."
+    assert "was incomplete" in capsys.readouterr().out
+    assert (dest / "My iPod.m3u8").read_text().count("#EXTINF") == 5
+    assert not list(dest.rglob("*.part"))
+
+
+def test_unstatable_source_is_a_per_file_failure(fake_ipod, tmp_path, monkeypatch, capsys):
+    victim = fake_ipod / "iPod_Control/Music/F01/EFGH.m4a"
+    real_stat = Path.stat
+
+    def stat(self, *args, **kwargs):
+        # Fail only where backup reads sizes and times (scan and is_file keep working).
+        if self == victim and sys._getframe(1).f_code.co_name in ("backup", "size_of", "same_file"):
+            raise OSError(errno.EIO, "Input/output error")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    dest = tmp_path / "backup"
+    with pytest.raises(SystemExit) as stop:
+        run(fake_ipod, dest)
+    assert str(stop.value) == "1 files could not be copied; run the same backup again to retry."
+    assert f"! could not read {victim}" in capsys.readouterr().out
+    assert (dest / "My iPod.m3u8").read_text().count("#EXTINF") == 5
+
+
+def test_target_that_appears_mid_run_is_skipped_not_overwritten(fake_ipod, tmp_path, monkeypatch, capsys):
+    dest = tmp_path / "backup"
+    target = backup.plan(scan(fake_ipod), dest)[0][1]
+    real = shutil.disk_usage
+
+    def usage(path):  # called after planning, before copying
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"someone else")
+        return real(path)
+
+    monkeypatch.setattr(backup.shutil, "disk_usage", usage)
+    with pytest.raises(SystemExit):
+        run(fake_ipod, dest)
+    assert target.read_bytes() == b"someone else"
+    assert f"! skipped {target}: it appeared while copying; run backup again" in capsys.readouterr().out
