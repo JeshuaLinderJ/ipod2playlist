@@ -126,8 +126,7 @@ def test_names_differing_only_in_case_both_survive(fake_ipod, tmp_path):
     shutil.copy(music / "ABCD.mp3", two)
     two.write_bytes(two.read_bytes() + b"22")
     songs = [song("Hey Jude", path=str(one)), song("hey jude", path=str(two))]
-    result, _ = backup.backup(songs, fake_ipod, dest)
-    assert result.copied == 2
+    backup.backup(songs, fake_ipod, dest)  # the other iPod files are not in `songs`, so they land in Unreadable/
     assert sorted(p.read_bytes() for p in (dest / "A/B").iterdir()) == sorted([one.read_bytes(), two.read_bytes()])
 
 
@@ -177,3 +176,20 @@ def test_protected_m4p_is_counted_and_noted(fake_ipod, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "1 songs are .m4p files bought from iTunes with copy protection" in out
     assert "authorised with that Apple ID." in out
+
+
+def test_unreadable_file_is_copied_to_unreadable_folder(fake_ipod, tmp_path, capsys):
+    bad = fake_ipod / "iPod_Control/Music/F07/BAD1.mp3"
+    bad.parent.mkdir()
+    bad.write_bytes(b"\x00\xffnot audio at all" * 20)
+    before = snapshot(fake_ipod)
+    dest = tmp_path / "backup"
+    run(fake_ipod, dest)
+    assert (dest / "Unreadable/BAD1.mp3").read_bytes() == bad.read_bytes()
+    assert "1 files had unreadable tags and were copied to Unreadable/" in capsys.readouterr().out
+    assert "BAD1" not in (dest / "My iPod.m3u8").read_text(encoding="utf-8")
+    run(fake_ipod, dest)  # resume: nothing is copied again
+    out = capsys.readouterr().out
+    assert "0 copied / 7 already there" in out
+    assert "1 files had unreadable tags" in out
+    assert snapshot(fake_ipod) == before
