@@ -8,6 +8,7 @@ dependencies = [
     "google-api-python-client>=2.201.0",
     "google-auth-oauthlib>=1.5.0",
     "mutagen>=1.48.1",
+    "pathvalidate>=3.3.1",
     "python-dotenv>=1.2.4",
     "rapidfuzz>=3.14.5",
     "spotipy>=2.26.0",

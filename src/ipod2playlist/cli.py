@@ -90,6 +90,14 @@ def build_parser() -> argparse.ArgumentParser:
                                 "or $YOUTUBE_CLIENT_SECRETS)")
     apply_cmd.add_argument("--token", type=Path, default=Path("youtube_token.json"),
                            help="where the YouTube login is saved (default: youtube_token.json)")
+
+    backup_cmd = subparsers.add_parser("backup", help="copy every song to a folder on this Mac, with M3U8 playlists")
+    backup_cmd.set_defaults(run=commands.run_backup)
+    backup_cmd.add_argument("root", type=Path, help="the iPod's mount point, e.g. /Volumes/IPOD")
+    backup_cmd.add_argument("dest", type=Path, help="where to copy the music, e.g. ~/Music/iPod backup")
+    backup_cmd.add_argument("--itunesdb", action="store_true",
+                            help="also write the iPod's own playlists and use its song names; "
+                                 "needs the itunesdb extra")
     return parser
 
 

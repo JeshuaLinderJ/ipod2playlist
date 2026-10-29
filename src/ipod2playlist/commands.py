@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 
-from ipod2playlist import doctor, itunesdb, library, messages, playlist, review, spotify, youtube
+from ipod2playlist import backup, doctor, itunesdb, library, messages, playlist, review, spotify, youtube
 from ipod2playlist.progress import Progress
 from ipod2playlist.scan import scan
 from ipod2playlist.spotify import SpotifyService
@@ -115,3 +115,20 @@ def run_apply_review(args) -> None:
     progress = load_progress(args.progress)
     service = build_service(args.service, args)
     print(review.apply_summary(review.apply_file(args.file, service, progress)))
+
+
+def run_backup(args) -> None:
+    if not args.root.is_dir():
+        raise SystemExit(f"{args.root} is not a directory (is the iPod mounted?)")
+    songs = scan(args.root)  # every file, not the deduplicated list
+    playlists = {}
+    if args.itunesdb:
+        tracks, playlists = itunesdb.read_or_warn(args.root)
+        songs = itunesdb.enrich(songs, args.root, tracks)
+    try:
+        result, present = backup.backup(songs, args.root, args.dest)
+    except backup.BackupError as error:
+        raise SystemExit(str(error))
+    count = backup.write_playlists(present, args.root, args.dest, playlists)
+    for line in backup.summary_lines(result, count, args.dest):
+        print(line)
