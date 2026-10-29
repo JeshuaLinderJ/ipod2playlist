@@ -83,6 +83,10 @@ def apply_review(accepted: list[str], rejected: list[str], service, progress: Pr
     for key in accepted:
         maybe = progress.maybe(service.name, key)
         # Status "missing" also makes a second run (or a repeated row) a no-op once the song is added.
+        if progress.status(service.name, key) == "added":
+            print(f"already added: {key}")
+            result.skipped += 1
+            continue
         if progress.status(service.name, key) != "missing" or maybe is None:
             print(f"skipped (no saved guess): {key}")
             result.skipped += 1

@@ -134,6 +134,18 @@ def test_apply_skips_accept_without_maybe_and_unknown_keys(work, capsys):
     assert "skipped (no saved guess): " + PLAIN.key in capsys.readouterr().out
 
 
+def test_apply_says_already_added_for_a_song_that_is_added(work, capsys):
+    progress = make_progress(work)
+    progress.record("spotify", PLAIN.key, "added")
+    fake, service = fake_service()
+    write_csv(work / "r.csv", [row("y", PLAIN.key)])
+
+    result = review.apply_file(work / "r.csv", service, progress)
+
+    assert result.skipped == 1
+    assert "already added: " + PLAIN.key in capsys.readouterr().out
+
+
 def test_apply_twice_adds_nothing_the_second_time(work):
     progress = make_progress(work)
     fake, service = fake_service()

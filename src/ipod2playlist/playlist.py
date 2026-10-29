@@ -2,6 +2,7 @@
 from pathlib import Path
 
 from ipod2playlist.library import Song
+from ipod2playlist.messages import new_playlist_command
 from ipod2playlist.progress import Progress
 from ipod2playlist.sync import SyncResult, search_count
 from ipod2playlist.youtube import days_needed
@@ -30,9 +31,9 @@ def no_songs_message(only_spotify_missing: bool, progress: Progress) -> str:
     return message
 
 
-def failure_hint(service: str) -> str:
+def failure_hint(service: str, argv) -> str:
     return (f"Nothing could be added; re-run to retry. If you deleted the {service} playlist online, "
-            f"run `ipod2playlist {service} --new-playlist` to start a new one.")
+            f"run `{new_playlist_command(argv, service)}` to start a new one.")
 
 
 def check_flags(dry_run: bool, new_playlist: bool) -> None:

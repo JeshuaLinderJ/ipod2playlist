@@ -111,8 +111,9 @@ def report(songs_path: Path, progress_path: Path, secrets_path: Path, token_path
         count = sync.search_count(candidates, progress, "youtube")
         youtube_pending = count > 0
         days = days_needed(count, progress.playlist_id("youtube") is not None)
-        lines.append(f"note About {days} day(s) of free YouTube quota for {count} songs "
-                     f"({SEARCH_COST + INSERT_COST} units each, {DAILY_QUOTA} a day).")
+        if count:
+            lines.append(f"note About {days} day(s) of free YouTube quota for {count} songs "
+                         f"({SEARCH_COST + INSERT_COST} units each, {DAILY_QUOTA} a day).")
 
     if sys.version_info < (3, 11):
         lines.append("note Python 3.10 works, but Google's library prints a warning about it; "

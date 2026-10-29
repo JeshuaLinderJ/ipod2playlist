@@ -6,7 +6,7 @@ from pathlib import Path
 from pathvalidate import sanitize_filename
 
 from ipod2playlist.backup_files import copy_one, on_disk, same_file, size_of, unreadable_files
-from ipod2playlist.backup_guard import BackupError, check_destination, claim_key
+from ipod2playlist.backup_guard import BackupError, check_destination, claim_key, ensure_writable
 from ipod2playlist.library import Song
 
 # Headroom under the 255-byte file name limit for " (2)" and ".part".
@@ -71,7 +71,7 @@ def _place_song(song: Song, dest: Path, names: dict, result: BackupResult):
 
 def backup(songs: list[Song], root: Path, dest: Path) -> tuple[BackupResult, list[tuple[Song, Path]]]:
     check_destination(root, dest)  # before anything is created
-    dest.mkdir(parents=True, exist_ok=True)
+    ensure_writable(dest)
     result, names, jobs = BackupResult(), {}, []   # jobs: [source, target, song or None, needs copy]
     for song in songs:
         target, needs_copy = _place_song(song, dest, names, result)
@@ -96,7 +96,7 @@ def backup(songs: list[Song], root: Path, dest: Path) -> tuple[BackupResult, lis
                 continue
             copy_one(source, target, size)
         except (OSError, BackupError) as error:  # one bad file must not stop the rest
-            print(f"! could not read {source}: {error}")
+            print(f"! could not copy {source} to {target}: {error}")
             result.failed += 1
             continue
         job[3] = True

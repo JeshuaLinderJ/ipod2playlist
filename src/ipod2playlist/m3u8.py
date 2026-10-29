@@ -45,3 +45,11 @@ def write_playlists(present: list[tuple[Song, Path]], root: Path, dest: Path,
         write_m3u8(entries, dest / f"{file_stem}.m3u8")
         written += 1
     return written
+
+
+def write_playlists_or_exit(present, root: Path, dest: Path, playlists: dict[str, list[str]]) -> int:
+    """write_playlists, but a failed write (read-only drive) ends with a one-line message, not a traceback."""
+    try:
+        return write_playlists(present, root, dest, playlists)
+    except OSError as error:
+        raise SystemExit(f"Could not write playlists to {dest} ({error}).")

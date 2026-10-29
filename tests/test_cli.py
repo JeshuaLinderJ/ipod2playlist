@@ -347,6 +347,36 @@ def test_playlist_gone_exits_3_and_keeps_progress(fake_ipod, work, monkeypatch, 
     assert (work / "progress.json").read_bytes() == before
 
 
+def test_playlist_gone_hint_keeps_the_users_options(fake_ipod, work, monkeypatch, capsys):
+    cli.main(["scan", str(fake_ipod)])
+    progress = Progress(work / "progress.json")
+    progress.set_playlist_id("youtube", "deleted-online")
+    progress.set_playlist_id("spotify", "sp")
+    progress.record("spotify", library.load_songs(work / "songs.json")[0].key, "missing")
+    progress.save()
+    use_services(monkeypatch, youtube=YouTubeService(FakeYouTube()))
+
+    with pytest.raises(SystemExit):
+        cli.main(["youtube", "--only-spotify-missing", "--name", "My Mix"])
+
+    err = capsys.readouterr().err
+    assert "ipod2playlist youtube --only-spotify-missing --name 'My Mix' --new-playlist" in err
+
+
+def test_failure_hint_keeps_the_users_options():
+    from ipod2playlist import playlist
+    hint = playlist.failure_hint("youtube", ["youtube", "--only-spotify-missing", "--name", "X"])
+    assert "ipod2playlist youtube --only-spotify-missing --name X --new-playlist" in hint
+
+
+def test_output_write_failure_is_a_message(fake_ipod, work, capsys):
+    cli.main(["scan", str(fake_ipod)])
+    (work / "spotify_missing.tsv").mkdir()  # a folder where the file should go
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["missing", "--service", "spotify"])
+    assert str(stopped.value).startswith("Could not write spotify_missing.tsv (")
+
+
 # --- error boundary ---
 
 def run_expecting_exit(monkeypatch, work, service_name, service):

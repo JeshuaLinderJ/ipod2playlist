@@ -11,7 +11,7 @@ import requests
 import spotipy
 from dotenv import find_dotenv, load_dotenv
 
-from ipod2playlist import commands, messages
+from ipod2playlist import backup_guard, commands, messages
 from ipod2playlist.errors import PlaylistGone, QuotaExceeded
 
 DEFAULT_PLAYLIST_NAME = "My iPod Playlist"
@@ -112,14 +112,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> None:
     load_dotenv(find_dotenv(usecwd=True))  # the user's cwd, not the installed package's directory
     args = build_parser().parse_args(argv)
+    args.argv = sys.argv[1:] if argv is None else list(argv)  # the exact command, for "run this instead" hints
     try:
+        if args.command != "doctor":  # doctor only reads, so it may run anywhere
+            backup_guard.refuse_ipod_paths(args)
         args.run(args)
     except QuotaExceeded:
         print("YouTube quota reached; progress saved. Re-run this command after the quota resets.",
               file=sys.stderr)
         raise SystemExit(2)
     except PlaylistGone as gone:
-        print(messages.playlist_gone(gone, args.progress), file=sys.stderr)
+        print(messages.playlist_gone(gone, args.progress, args.argv), file=sys.stderr)
         raise SystemExit(3)
     except spotipy.exceptions.SpotifyOauthError as error:
         raise SystemExit(messages.spotify_login(error))

@@ -255,7 +255,7 @@ def test_copy_error_on_one_file_does_not_stop_the_others(fake_ipod, tmp_path, mo
         run(fake_ipod, dest)
     assert str(stop.value) == "1 files could not be copied; run the same backup again to retry."
     out = capsys.readouterr().out
-    assert "! could not read" in out
+    assert "! could not copy" in out
     assert len(digests(dest)) + len(list(dest.rglob("*.flac"))) + len(list(dest.rglob("*.m4a"))) + len(list(dest.rglob("*.wav"))) == 5
     assert len([ln for ln in (dest / "My iPod.m3u8").read_text().splitlines() if ln.startswith("./")]) == 5
     monkeypatch.setattr(backup.shutil, "copy2", real)
@@ -419,7 +419,7 @@ def test_unstatable_source_is_a_per_file_failure(fake_ipod, tmp_path, monkeypatc
     with pytest.raises(SystemExit) as stop:
         run(fake_ipod, dest)
     assert str(stop.value) == "1 files could not be copied; run the same backup again to retry."
-    assert f"! could not read {victim}" in capsys.readouterr().out
+    assert f"! could not copy {victim}" in capsys.readouterr().out
     assert (dest / "My iPod.m3u8").read_text().count("#EXTINF") == 5
 
 
@@ -438,3 +438,55 @@ def test_target_that_appears_mid_run_is_skipped_not_overwritten(fake_ipod, tmp_p
         run(fake_ipod, dest)
     assert target.read_bytes() == b"someone else"
     assert f"! skipped {target}: it appeared while copying; run backup again" in capsys.readouterr().out
+
+
+def test_read_only_dest_gives_one_clear_message(fake_ipod, tmp_path, capsys):
+    if os.geteuid() == 0:
+        pytest.skip("root can write to a read-only folder")
+    read_only = tmp_path / "ro"
+    read_only.mkdir()
+    read_only.chmod(0o555)
+    try:
+        for dest in (read_only / "new", read_only):
+            with pytest.raises(SystemExit) as stop:
+                run(fake_ipod, dest)
+            assert str(stop.value).startswith(f"Can't write to {dest} (")
+            assert str(stop.value).endswith("choose a folder on this Mac or a drive formatted for Mac.")
+            assert "could not copy" not in capsys.readouterr().out
+    finally:
+        read_only.chmod(0o755)
+
+
+def test_failed_playlist_write_is_a_message_not_a_traceback(fake_ipod, tmp_path, monkeypatch):
+    def refuse(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+    monkeypatch.setattr(m3u8, "write_playlists", refuse)
+    with pytest.raises(SystemExit) as stop:
+        run(fake_ipod, tmp_path / "backup")
+    assert str(stop.value).startswith(f"Could not write playlists to {tmp_path / 'backup'} (")
+
+
+def test_commands_refuse_to_run_from_inside_the_ipod(fake_ipod, monkeypatch, capsys):
+    monkeypatch.chdir(fake_ipod)
+    before = snapshot(fake_ipod)
+    for argv in (["scan", "."], ["review", "--service", "spotify"], ["export-csv"], ["missing", "--service", "spotify"],
+                 ["backup", ".", "backup"]):
+        with pytest.raises(SystemExit) as stop:
+            cli.main(argv)
+        assert str(stop.value) == backup_guard.IPOD_REFUSAL
+    assert snapshot(fake_ipod) == before
+    assert {p.name for p in fake_ipod.iterdir()} == {"iPod_Control"}
+
+
+def test_doctor_may_run_inside_the_ipod(fake_ipod, monkeypatch):
+    monkeypatch.chdir(fake_ipod)
+    cli.main(["doctor"])
+
+
+def test_songs_path_on_the_ipod_is_refused(fake_ipod, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    before = snapshot(fake_ipod)
+    with pytest.raises(SystemExit) as stop:
+        cli.main(["scan", str(fake_ipod), "--songs", str(fake_ipod / "songs.json")])
+    assert str(stop.value) == backup_guard.IPOD_REFUSAL
+    assert snapshot(fake_ipod) == before

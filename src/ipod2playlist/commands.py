@@ -52,13 +52,15 @@ def run_scan(args) -> None:
         if tracks:  # empty means the database was unreadable (already warned): plain scan
             found, by_key, named = itunesdb.scan_with_db(found, args.root, tracks, playlists)
     songs = library.dedupe(found)
-    library.save_songs(songs, args.songs)
-    library.write_tsv(songs, args.songs.with_suffix(".tsv"))
+    with messages.write_guard():
+        library.save_songs(songs, args.songs)
+        library.write_tsv(songs, args.songs.with_suffix(".tsv"))
     print(f"Found {len(found)} songs, removed {len(found) - len(songs)} duplicates; "
           f"wrote {len(songs)} to {args.songs} and {args.songs.with_suffix('.tsv')}")
     if args.itunesdb and tracks:
         path = args.songs.with_name("ipod_playlists.json")
-        itunesdb.save_playlists(by_key, path)
+        with messages.write_guard():
+            itunesdb.save_playlists(by_key, path)
         print(f"Read the iPod's database: {named} untagged songs named, {len(by_key)} playlists saved to {path}")
 
 
@@ -84,7 +86,7 @@ def run_playlist(args) -> None:
     result = sync(songs, service, progress, args.name, public=args.public, retry_missing=args.retry_missing)
     print(f"{result.added} added / {result.missing} missing / {result.skipped} skipped / {result.failed} failed")
     if result.failed and not result.added:
-        print(playlist.failure_hint(args.command))
+        print(playlist.failure_hint(args.command, args.argv))
 
 
 def run_missing(args) -> None:
@@ -92,7 +94,8 @@ def run_missing(args) -> None:
     keys = set(progress.keys_with_status(args.service, "missing"))
     songs = [song for song in load_songs(args.songs) if song.key in keys]
     out = Path(f"{args.service}_missing.tsv")
-    library.write_tsv(songs, out)
+    with messages.write_guard():
+        library.write_tsv(songs, out)
     print(f"Wrote {len(songs)} missing songs to {out}")
 
 
@@ -106,7 +109,8 @@ def run_doctor(args) -> None:
 def run_review(args) -> None:
     songs = load_songs(args.songs)
     progress = load_progress(args.progress)
-    missing, guessed = review.write_reports(songs, progress, args.service, Path("."))
+    with messages.write_guard():
+        missing, guessed = review.write_reports(songs, progress, args.service, Path("."))
     print(review.report_message(args.service, missing, guessed))
 
 
@@ -130,7 +134,7 @@ def run_backup(args) -> None:
         result, present = backup.backup(songs, args.root, args.dest)
     except BackupError as error:
         raise SystemExit(str(error))
-    count = m3u8.write_playlists(present, args.root, args.dest, playlists)
+    count = m3u8.write_playlists_or_exit(present, args.root, args.dest, playlists)
     for line in backup.summary_lines(result, count, args.dest):
         print(line)
     if result.failed:  # the playlists above cover what was copied; a re-run retries the rest
@@ -140,5 +144,5 @@ def run_backup(args) -> None:
 def run_export_csv(args) -> None:
     songs = load_songs(args.songs)
     progress = load_progress(args.progress)
-    for line in export.export_all(songs, progress, args.service, args.songs, args.out):
-        print(line)
+    with messages.write_guard():
+        print("\n".join(export.export_all(songs, progress, args.service, args.songs, args.out)))

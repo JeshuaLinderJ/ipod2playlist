@@ -206,3 +206,11 @@ def test_malformed_service_block_is_reported_as_corrupt(tmp_path):
     for text in ('{"services": {"spotify": null}}', '{"services": {"spotify": {"songs": []}}}'):
         setup.progress.write_text(text)
         assert f"!!   Progress file {setup.progress} is corrupt; fix or delete it." in setup.report()
+
+
+def test_no_quota_line_when_no_song_needs_a_search(tmp_path):
+    setup = Setup(tmp_path)
+    library.save_songs([song("c", artist=library.UNKNOWN_ARTIST)], setup.songs)
+    setup.secrets.write_text('{"installed": {}}')
+    lines = setup.report(FULL_ENV)
+    assert not [line for line in lines if "day(s)" in line]

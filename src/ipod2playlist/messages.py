@@ -1,9 +1,28 @@
 """The exact one-line text of each error-boundary message that cli.main shows."""
+import shlex
+from contextlib import contextmanager
 
 
-def playlist_gone(gone, progress_path) -> str:
+def new_playlist_command(argv, service) -> str:
+    """The command the user just ran, plus --new-playlist, so no option (--name, --songs...) is lost."""
+    if not argv or argv[0] != service:  # e.g. apply-review has no --new-playlist: use the plain command
+        argv = [service]
+    kept = [word for word in argv if word not in ("--new-playlist", "--dry-run")]  # dry-run can't combine
+    return shlex.join(["ipod2playlist", *kept, "--new-playlist"])
+
+
+def playlist_gone(gone, progress_path, argv) -> str:
     return (f"The {gone.service} playlist saved in {progress_path} no longer exists (deleted online?). "
-            f"Progress is saved. To start a new one, run: ipod2playlist {gone.service} --new-playlist")
+            f"Progress is saved. To start a new one, run: {new_playlist_command(argv, gone.service)}")
+
+
+@contextmanager
+def write_guard():
+    """Turn a failed output write (read-only folder, full disk) into a one-line message."""
+    try:
+        yield
+    except OSError as error:
+        raise SystemExit(f"Could not write {error.filename} ({error.strerror or error}).")
 
 
 def spotify_login(error) -> str:
