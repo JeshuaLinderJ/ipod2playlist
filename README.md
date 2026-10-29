@@ -77,7 +77,9 @@ Next: ipod2playlist spotify --dry-run  (then ipod2playlist spotify)
 
 `ok` means fine, `!!` means something needs fixing (the line says what), and `note` is only information.
 The last line, `Next:`, is the one thing to do now. Before you have scanned, it says to scan the iPod, which is
-the next step; run `doctor` again after each step to get the following one.
+the next step; run `doctor` again after each step to get the following one. When the tool's output says
+`ipod2playlist ...` (as in the `Next:` line), type `uv run ipod2playlist ...`, or install the command once with
+`uv tool install .` and then type it as shown.
 
 ### 6. Scan it
 
@@ -158,7 +160,7 @@ saved for review)`. `review --service spotify` writes two files:
 Then `apply-review --service spotify` adds the songs you marked y and prints a summary such as
 `1 added / 1 rejected / 0 skipped / 0 failed`. Only the guess that was saved during the search is ever added;
 the links and titles in the file are never read back, so editing them changes nothing. A song with no saved
-guess is skipped (`skipped (no saved guess)`), and an n makes the tool forget the guess. Running it twice is
+guess is skipped (`skipped (no saved guess)`), one already in the playlist shows `already added`, and an n makes the tool forget the guess. Running it twice is
 safe. The same works for YouTube (`--service youtube`).
 
 ## Things worth knowing
@@ -235,8 +237,8 @@ It works on a copy of the database and never writes to the iPod. The package tha
 (Beta), so treat the result as a bonus and check a few names against the iPod's screen.
 
 Prefer one global command? From the project folder, `uv tool install '.[itunesdb]'` installs `ipod2playlist`
-with this support. Songs recorded as missing earlier because they were untagged are only searched again with
-`--retry-missing` after you re-scan with `--itunesdb`.
+with this support. Songs recorded as missing earlier because they were untagged get new names from the re-scan,
+so the next normal `spotify` or `youtube` run searches them automatically; `--retry-missing` is not needed.
 
 ## Other music services
 
