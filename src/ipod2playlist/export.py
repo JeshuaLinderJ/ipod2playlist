@@ -3,6 +3,7 @@ import csv
 from pathlib import Path
 
 from ipod2playlist import backup, itunesdb
+from ipod2playlist.backup_guard import claim_key
 from ipod2playlist.library import Song
 from ipod2playlist.progress import Progress
 
@@ -44,9 +45,18 @@ def export_all(songs: list[Song], progress: Progress, service: str | None,
     if not service:
         by_key = {song.key: song for song in songs}
         playlists = itunesdb.load_playlists(songs_path.with_name("ipod_playlists.json"))
+        used = {claim_key(out.name)}  # a playlist must not replace the library file, or another playlist
         for name, keys in playlists.items():  # dict order is the iPod's playlist order
             members = [by_key[key] for key in keys if key in by_key]
-            path = out.with_name(playlist_file_name(name))  # next to the library file
+            if not members:
+                continue
+            stem, number = playlist_file_name(name).removesuffix(".csv"), 1
+            file_stem = stem
+            while claim_key(file_stem + ".csv") in used:  # same file on a Mac: "Mix"/"mix", NFC/NFD
+                number += 1
+                file_stem = f"{stem} ({number})"
+            used.add(claim_key(file_stem + ".csv"))
+            path = out.with_name(file_stem + ".csv")  # next to the library file
             write_csv(members, path)
             lines.append(f"Wrote {len(members)} songs to {path}")
     lines.append(ADVICE)

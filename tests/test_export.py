@@ -70,3 +70,36 @@ def test_missing_songs_file_exits_with_hint(work):
         cli.main(["export-csv"])
 
     assert stopped.value.code == "songs.json not found; run `ipod2playlist scan <ipod path>` first."
+
+
+def test_playlists_differing_only_in_case_both_get_files(work):
+    one, two = Song("One", "A", "X", "a.mp3"), Song("Two", "B", "Y", "b.mp3")
+    library.save_songs([one, two], work / "songs.json")
+    (work / "ipod_playlists.json").write_text(json.dumps({"Mix": [one.key], "mix": [two.key]}))
+
+    cli.main(["export-csv"])
+
+    assert (work / "playlist_Mix.csv").read_text(encoding="utf-8-sig").splitlines()[1] == "One,A,X"
+    assert (work / "playlist_Mix (2).csv").read_text(encoding="utf-8-sig").splitlines()[1] == "Two,B,Y"
+
+
+def test_playlist_does_not_overwrite_the_out_file(work):
+    one = Song("One", "A", "X", "a.mp3")
+    two = Song("Two", "B", "Y", "b.mp3")
+    library.save_songs([one, two], work / "songs.json")
+    (work / "ipod_playlists.json").write_text(json.dumps({"Mix": [one.key]}))
+
+    cli.main(["export-csv", "--out", "playlist_Mix.csv"])
+
+    assert len((work / "playlist_Mix.csv").read_text(encoding="utf-8-sig").splitlines()) == 3
+    assert (work / "playlist_Mix (2).csv").read_text(encoding="utf-8-sig").splitlines() == [
+        "title,artist,album", "One,A,X"]
+
+
+def test_playlist_of_unknown_songs_writes_no_file(work):
+    library.save_songs([Song("One", "A", "X", "a.mp3")], work / "songs.json")
+    (work / "ipod_playlists.json").write_text(json.dumps({"Ghost": ["unknown|key"]}))
+
+    cli.main(["export-csv"])
+
+    assert [p.name for p in work.glob("*.csv")] == ["library.csv"]
