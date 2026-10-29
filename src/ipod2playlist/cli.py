@@ -98,6 +98,14 @@ def build_parser() -> argparse.ArgumentParser:
     backup_cmd.add_argument("--itunesdb", action="store_true",
                             help="also write the iPod's own playlists and use its song names; "
                                  "needs the itunesdb extra")
+
+    export_cmd = add_command("export-csv", "write a CSV for soundiiz.com or tunemymusic.com (no API calls)",
+                             commands.run_export_csv)
+    add_progress(export_cmd)
+    export_cmd.add_argument("--service", choices=["spotify", "youtube"],
+                            help="export only the songs this service could not find")
+    export_cmd.add_argument("--out", type=Path, default=None,
+                            help="output file (default: library.csv, or <service>_missing.csv)")
     return parser
 
 

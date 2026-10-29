@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 
-from ipod2playlist import backup, doctor, itunesdb, library, m3u8, messages, playlist, review, spotify, youtube
+from ipod2playlist import backup, doctor, export, itunesdb, library, m3u8, messages, playlist, review, spotify, youtube
 from ipod2playlist.backup_guard import BackupError
 from ipod2playlist.progress import Progress
 from ipod2playlist.scan import scan
@@ -135,3 +135,10 @@ def run_backup(args) -> None:
         print(line)
     if result.failed:  # the playlists above cover what was copied; a re-run retries the rest
         raise SystemExit(f"{result.failed} files could not be copied; run the same backup again to retry.")
+
+
+def run_export_csv(args) -> None:
+    songs = load_songs(args.songs)
+    progress = load_progress(args.progress)
+    for line in export.export_all(songs, progress, args.service, args.songs, args.out):
+        print(line)
