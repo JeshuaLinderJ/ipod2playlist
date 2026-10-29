@@ -77,3 +77,12 @@ def test_importing_pygpod_shows_no_warning():
                              "from ipod2playlist import itunesdb; itunesdb._import_pygpod()"],
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_garbage_play_counts_prints_no_traceback(fake_ipod_with_db, work):
+    # A subprocess: pytest installs its own log handlers, which would hide the problem in-process.
+    (fake_ipod_with_db / "iPod_Control/iTunes/PlayCounts.plist").write_bytes(b"\x00garbage" * 20)
+    result = subprocess.run([sys.executable, "-c", "from ipod2playlist.cli import main; main()",
+                             "scan", str(fake_ipod_with_db), "--itunesdb"], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "Traceback" not in result.stderr

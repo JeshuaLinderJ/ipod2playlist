@@ -1,5 +1,6 @@
 """Optional: read the iPod's own iTunesDB with pygpod. Reads a COPY; nothing is ever written to the iPod."""
 import json
+import logging
 import shutil
 import sys
 import tempfile
@@ -39,6 +40,8 @@ def _import_pygpod():
             import pygpod
     except ImportError:
         raise PygpodMissing(INSTALL_HINT)
+    # pygpod logs warnings with tracebacks and sets no handler, so Python would print them as a crash.
+    logging.getLogger("pygpod").addHandler(logging.NullHandler())
     return pygpod
 
 
