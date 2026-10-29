@@ -1,17 +1,15 @@
-"""Copy every audio file off the iPod into a folder on this Mac, plus M3U8 playlists. Never writes to the iPod."""
+"""Copy every audio file off the iPod into a folder on this Mac. Never writes to the iPod."""
 import os
 import shutil
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
 from pathvalidate import sanitize_filename
 
-from ipod2playlist.itunesdb import relative_key
+from ipod2playlist.backup_guard import BackupError, check_destination, claim_key
 from ipod2playlist.library import Song
 from ipod2playlist.scan import AUDIO_EXTENSIONS
 
-ALL_SONGS_PLAYLIST = "My iPod"
 # Headroom under the 255-byte file name limit for " (2)" and ".part".
 MAX_NAME = 200
 UNREADABLE_FOLDER = "Unreadable"
@@ -20,14 +18,11 @@ UNREADABLE_FOLDER = "Unreadable"
 @dataclass
 class BackupResult:
     copied: int = 0
-    present: int = 0      # already in DEST with the same size (resume)
-    conflicts: int = 0    # a different file already has that name; left alone
-    protected: int = 0    # .m4p (FairPlay) files copied
+    present: int = 0      # already in DEST, same size and modification time (resume)
+    conflicts: int = 0    # a different file already has that name; left alone, the song gets another name
+    protected: int = 0    # .m4p (FairPlay) files in the backup
     unreadable: int = 0   # audio files scan() could not read tags from, copied as-is to Unreadable/
-
-
-class BackupError(Exception):
-    pass
+    failed: int = 0       # files that could not be copied this time
 
 
 def safe_name(text: str) -> str:
@@ -35,33 +30,67 @@ def safe_name(text: str) -> str:
     return "_" if name in ("", ".", "..") else name
 
 
-def _claim_key(path: Path) -> str:
-    """macOS folders ignore case (and Unicode form), so compare names the way the Mac will."""
-    return unicodedata.normalize("NFC", str(path)).casefold()
+def _numbered(stem: str, suffix: str, number: int) -> str:
+    return stem + suffix if number == 1 else f"{stem} ({number}){suffix}"
+
+
+def _on_disk(path: Path, dest: Path) -> Path:
+    """Spell each folder and file the way DEST already does (macOS ignores case), so playlists match the disk."""
+    current = dest
+    for name in path.relative_to(dest).parts:
+        try:
+            existing = os.listdir(current)
+        except OSError:
+            existing = []
+        match = name if name in existing else next((e for e in existing if claim_key(e) == claim_key(name)), name)
+        current = current / match
+    return current
+
+
+def _same_file(source: Path, target: Path) -> bool:
+    """rsync's quick check: same size and modification time (copy2 keeps the time). A target time with no
+    fraction means the drive rounds times (FAT and HFS+ keep 1-2 s), so allow 2 s; otherwise they must agree."""
+    a, b = source.stat(), target.stat()
+    slack = 2_000_000_000 if b.st_mtime_ns % 1_000_000_000 == 0 else 1_000_000
+    return a.st_size == b.st_size and abs(a.st_mtime_ns - b.st_mtime_ns) < slack
+
+
+def _place(source: Path, folder: Path, stem: str, suffix: str, dest: Path, claimed: set, result: BackupResult):
+    """Pick the file name for one source: its own copy if there, else a free name. Never skips, never overwrites."""
+    number = 1
+    while True:
+        target = _on_disk(folder / _numbered(stem, suffix, number), dest)
+        number += 1
+        if claim_key(str(target)) in claimed:
+            continue
+        if not target.exists():
+            claimed.add(claim_key(str(target)))
+            return target, True
+        if _same_file(source, target):
+            claimed.add(claim_key(str(target)))
+            return target, False
+        result.conflicts += 1  # someone else's file (or another song's) has this name; try the next one
+        print(f"! exists, left alone: {target}")
 
 
 def plan(songs: list[Song], dest: Path) -> list[tuple[Song, Path]]:
-    claimed = set()
-    result = []
-    for song in songs:
-        folder = dest / safe_name(song.artist) / safe_name(song.album)
-        suffix = Path(song.path).suffix.lower()
-        stem = safe_name(song.title)
-        target = folder / (stem + suffix)
-        number = 1
-        while _claim_key(target) in claimed:
-            number += 1
-            target = folder / f"{stem} ({number}){suffix}"
-        claimed.add(_claim_key(target))
-        result.append((song, target))
-    return result
+    """Where each song goes in DEST as it is now (a clean DEST gives the plain Artist/Album/Title names)."""
+    claimed, result = set(), BackupResult()
+    return [(song, _place_song(song, dest, claimed, result)[0]) for song in songs]
 
 
-def _check_destination(root: Path, dest: Path) -> None:
-    resolved_root, resolved_dest = root.resolve(), dest.resolve()
-    if resolved_dest == resolved_root or resolved_root in resolved_dest.parents:
-        raise BackupError("The backup folder must not be on the iPod; "
-                          "choose a folder on this Mac, e.g. ~/Music/iPod backup.")
+def _place_song(song: Song, dest: Path, claimed: set, result: BackupResult):
+    source = Path(song.path)
+    folder = dest / safe_name(song.artist) / safe_name(song.album)
+    return _place(source, folder, safe_name(song.title), source.suffix.lower(), dest, claimed, result)
+
+
+def unreadable_files(songs: list[Song], root: Path) -> list[Path]:
+    """Audio files scan() skipped (tags mutagen cannot read); found the way scan walks. May be the only copy."""
+    known = {Path(song.path).resolve() for song in songs}
+    return [path for path in sorted(Path(root).rglob("*"))
+            if not path.name.startswith("._") and path.suffix.lower() in AUDIO_EXTENSIONS
+            and path.is_file() and path.resolve() not in known]
 
 
 def _copy_one(source: Path, target: Path, size: int) -> None:
@@ -75,99 +104,40 @@ def _copy_one(source: Path, target: Path, size: int) -> None:
     os.rename(part, target)
 
 
-def unreadable_files(songs: list[Song], root: Path, dest: Path) -> list[tuple[Path, Path]]:
-    """Audio files scan() skipped (tags mutagen cannot read). They may be the only copy, so back them up as-is."""
-    known = {Path(song.path) for song in songs}
-    claimed = set()
-    result = []
-    for source in sorted((root / "iPod_Control" / "Music").rglob("*")):
-        if (source in known or source.name.startswith("._") or source.suffix.lower() not in AUDIO_EXTENSIONS
-                or not source.is_file()):
-            continue
-        target = dest / UNREADABLE_FOLDER / source.name
-        number = 1
-        while _claim_key(target) in claimed:  # same file name in two Music folders
-            number += 1
-            target = dest / UNREADABLE_FOLDER / f"{source.stem} ({number}){source.suffix}"
-        claimed.add(_claim_key(target))
-        result.append((source, target))
-    return result
-
-
 def backup(songs: list[Song], root: Path, dest: Path) -> tuple[BackupResult, list[tuple[Song, Path]]]:
-    _check_destination(root, dest)  # before anything is created
+    check_destination(root, dest)  # before anything is created
     dest.mkdir(parents=True, exist_ok=True)
-    result = BackupResult()
-    present = []      # songs in DEST and equal to the source: these go in the playlists
-    # (source, target, song or None for an unreadable file, label for progress)
-    jobs = [(Path(song.path), target, song, f"{song.artist} - {song.title}") for song, target in plan(songs, dest)]
-    jobs += [(source, target, None, f"{UNREADABLE_FOLDER}/{target.name}")
-             for source, target in unreadable_files(songs, root, dest)]
-    to_copy = []
-    for source, target, song, label in jobs:
-        size = source.stat().st_size
-        if not target.exists():
-            to_copy.append((source, target, size, song, label))
-            continue
-        if target.stat().st_size != size:
-            result.conflicts += 1
-            print(f"! exists, left alone: {target}")
-            continue
-        result.present += 1
-        if song is None:
-            result.unreadable += 1
-        else:
-            present.append((song, target))
-    needed = sum(job[2] for job in to_copy)
+    result, claimed, jobs = BackupResult(), set(), []   # jobs: [source, target, song or None, needs copy]
+    for song in songs:
+        target, needs_copy = _place_song(song, dest, claimed, result)
+        jobs.append([Path(song.path), target, song, needs_copy])
+    for source in unreadable_files(songs, root):
+        target, needs_copy = _place(source, dest / UNREADABLE_FOLDER, source.stem, source.suffix, dest, claimed, result)
+        jobs.append([source, target, None, needs_copy])
+    to_copy = [job for job in jobs if job[3]]
+    needed = sum(job[0].stat().st_size for job in to_copy)
     free = shutil.disk_usage(dest).free
     if needed > free:
         raise BackupError(f"Not enough space in {dest}: need {needed / 1e9:.1f} GB, {free / 1e9:.1f} GB free.")
-    for i, (source, target, size, song, label) in enumerate(to_copy, start=1):
-        if target.exists():  # appeared since the check: never overwrite
-            result.conflicts += 1
-            print(f"! exists, left alone: {target}")
+    result.present = len(jobs) - len(to_copy)
+    for i, job in enumerate(to_copy, start=1):
+        source, target, song, _ = job
+        try:
+            if target.exists():  # appeared since the check: never overwrite
+                raise FileExistsError(f"{target} appeared during the backup")
+            _copy_one(source, target, source.stat().st_size)
+        except OSError as error:
+            print(f"! could not read {source}: {error}")
+            result.failed += 1
+            job[3] = None  # not in DEST
             continue
-        _copy_one(source, target, size)
         result.copied += 1
-        if song is None:
-            result.unreadable += 1
-        else:
-            present.append((song, target))
-        print(f"[{i}/{len(to_copy)}] {label}")
+        print(f"[{i}/{len(to_copy)}] " + (f"{song.artist} - {song.title}" if song else f"{UNREADABLE_FOLDER}/{target.name}"))
+    in_dest = [job for job in jobs if job[3] is not None]
+    result.unreadable = sum(1 for job in in_dest if job[2] is None)
+    present = [(job[2], job[1]) for job in in_dest if job[2] is not None]
     result.protected = sum(1 for song, _ in present if Path(song.path).suffix.lower() == ".m4p")
     return result, present
-
-
-def write_m3u8(entries: list[tuple[Song, Path]], path: Path) -> None:
-    lines = ["#EXTM3U"]
-    for song, target in entries:
-        lines.append(f"#EXTINF:-1,{song.artist} - {song.title}")
-        lines.append(Path(os.path.relpath(target, path.parent)).as_posix())
-    # Written beside the final name and renamed, so a crash never leaves half a playlist.
-    part = path.with_name(path.name + ".part")
-    part.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
-    os.replace(part, path)  # replacing is fine: the playlists are generated files; never-overwrite covers audio
-
-
-def write_playlists(present: list[tuple[Song, Path]], root: Path, dest: Path,
-                    playlists: dict[str, list[str]]) -> int:
-    write_m3u8(present, dest / f"{ALL_SONGS_PLAYLIST}.m3u8")
-    written = 1
-    by_key = {relative_key(song.path, root): (song, target) for song, target in present}
-    used = {ALL_SONGS_PLAYLIST.casefold()}  # an iPod playlist called "My iPod" must not replace the all-songs file
-    for name, keys in playlists.items():
-        entries = [by_key[key] for key in keys if key in by_key]
-        if not entries:
-            continue
-        stem, number = safe_name(name), 1
-        file_stem = stem
-        while file_stem.casefold() in used:
-            number += 1
-            file_stem = f"{stem} ({number})"
-        used.add(file_stem.casefold())
-        write_m3u8(entries, dest / f"{file_stem}.m3u8")
-        written += 1
-    return written
 
 
 def summary_lines(result: BackupResult, playlist_count: int, dest: Path) -> list[str]:

@@ -4,7 +4,15 @@ from pathlib import Path
 import pytest
 
 from conftest import FIXTURES, snapshot
-from ipod2playlist import backup, cli
+import errno
+import hashlib
+import os
+import unicodedata
+
+import mutagen
+
+from ipod2playlist import backup, backup_guard, cli, m3u8
+from ipod2playlist.itunesdb import relative_key
 from ipod2playlist.library import Song
 from ipod2playlist.scan import scan
 
@@ -55,11 +63,11 @@ def test_interrupted_copy_resumes(fake_ipod, tmp_path, monkeypatch):
         calls.append(source)
         if len(calls) == 3:
             Path(target).write_bytes(b"half")  # a half-written .part, as a pulled cable would leave
-            raise OSError("cable pulled")
+            raise KeyboardInterrupt
         return real_copy(source, target)
 
     monkeypatch.setattr(backup.shutil, "copy2", flaky)
-    with pytest.raises(OSError):
+    with pytest.raises(KeyboardInterrupt):
         backup.backup(songs, fake_ipod, dest)
     targets = [t for _, t in backup.plan(songs, dest)]
     assert all(t.exists() for t in targets[:2])
@@ -77,10 +85,45 @@ def test_never_overwrites_a_different_file(fake_ipod, tmp_path, capsys):
     target.parent.mkdir(parents=True)
     target.write_bytes(b"mine")
     result, present = backup.backup(songs, fake_ipod, dest)
-    assert result.conflicts == 1 and result.copied == 5
+    assert result.conflicts == 1 and result.copied == 6  # the song is still backed up, under another name
     assert target.read_bytes() == b"mine"
-    assert target not in [t for _, t in present]  # a stranger's file is not our song
+    assert (target.parent / "Hey Jude (2).mp3").read_bytes() == Path(songs[0].path).read_bytes()
+    assert target not in [t for _, t in present]
     assert f"! exists, left alone: {target}" in capsys.readouterr().out
+
+
+def test_same_size_different_file_is_not_taken_for_ours(fake_ipod, tmp_path):
+    songs = scan(fake_ipod)
+    dest = tmp_path / "backup"
+    target = backup.plan(songs, dest)[0][1]
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"x" * Path(songs[0].path).stat().st_size)
+    backup.backup(songs, fake_ipod, dest)
+    assert target.read_bytes().startswith(b"xxxx")
+    assert (target.parent / "Hey Jude (2).mp3").read_bytes() == Path(songs[0].path).read_bytes()
+
+
+def digests(folder):
+    return [hashlib.sha256(p.read_bytes()).hexdigest() for p in folder.rglob("*")
+            if p.suffix == ".mp3" and "Unreadable" not in p.parts]
+
+
+def test_order_shift_loses_no_song(fake_ipod, tmp_path):
+    dest = tmp_path / "backup"
+    music = fake_ipod / "iPod_Control/Music"
+    for name, tags, extra in (("F05/A.mp3", "a", b"a"), ("F01/B.mp3", "b", b"bbbbb")):
+        path = music / name
+        shutil.copy(FIXTURES / "silence.mp3", path)
+        audio = mutagen.File(path, easy=True)
+        audio.update({"title": ["Twist"], "artist": ["Zed"], "album": ["Z"]})
+        audio.save()
+        path.write_bytes(path.read_bytes() + extra)
+    a, b = music / "F05/A.mp3", music / "F01/B.mp3"
+    backup.backup([s for s in scan(fake_ipod) if s.path == str(a)], fake_ipod, dest)  # only A exists in DEST
+    backup.backup(scan(fake_ipod), fake_ipod, dest)  # now B sorts first and wants A's name
+    got = digests(dest)
+    for source in (a, b):
+        assert got.count(hashlib.sha256(source.read_bytes()).hexdigest()) == 1
 
 
 def test_destination_inside_the_ipod_is_refused(fake_ipod):
@@ -145,9 +188,9 @@ def test_ipod_playlist_named_my_ipod_gets_a_new_name(fake_ipod, tmp_path):
     songs = scan(fake_ipod)
     dest = tmp_path / "backup"
     _, present = backup.backup(songs, fake_ipod, dest)
-    key = backup.relative_key(songs[0].path, fake_ipod)
-    count = backup.write_playlists(present, fake_ipod, dest, {"My iPod": [key], "my ipod": [key]})
-    assert count == 3
+    key = relative_key(songs[0].path, fake_ipod)
+    count = m3u8.write_playlists(present, fake_ipod, dest, {"My iPod": [key], "my ipod": [key], "Cafe\u0301": [key], "Caf\u00e9": [key]})
+    assert count == 5
     assert (dest / "My iPod (2).m3u8").exists() and (dest / "My iPod (3).m3u8").exists()
     assert (dest / "My iPod.m3u8").read_text(encoding="utf-8").count("#EXTINF") == 6
 
@@ -193,3 +236,106 @@ def test_unreadable_file_is_copied_to_unreadable_folder(fake_ipod, tmp_path, cap
     assert "0 copied / 7 already there" in out
     assert "1 files had unreadable tags" in out
     assert snapshot(fake_ipod) == before
+
+
+def test_copy_error_on_one_file_does_not_stop_the_others(fake_ipod, tmp_path, monkeypatch, capsys):
+    dest = tmp_path / "backup"
+    real, calls = shutil.copy2, []
+
+    def flaky(source, target):
+        calls.append(source)
+        if len(calls) == 2:
+            raise OSError(errno.EIO, "Input/output error")
+        return real(source, target)
+
+    monkeypatch.setattr(backup.shutil, "copy2", flaky)
+    with pytest.raises(SystemExit) as stop:
+        run(fake_ipod, dest)
+    assert str(stop.value) == "1 files could not be copied; run the same backup again to retry."
+    out = capsys.readouterr().out
+    assert "! could not read" in out
+    assert len(digests(dest)) + len(list(dest.rglob("*.flac"))) + len(list(dest.rglob("*.m4a"))) + len(list(dest.rglob("*.wav"))) == 5
+    assert len([ln for ln in (dest / "My iPod.m3u8").read_text().splitlines() if ln.startswith("./")]) == 5
+    monkeypatch.setattr(backup.shutil, "copy2", real)
+    run(fake_ipod, dest)  # the retry finishes the job
+    assert "1 copied / 5 already there" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("dest_name", ["IPOD/bk", "ipod/bk", "iPod/sub/bk", "bk"])
+def test_guard_ignores_case(tmp_path, dest_name):
+    root = tmp_path / "ipod"
+    (root / "iPod_Control").mkdir(parents=True)
+    dest = tmp_path / dest_name if dest_name != "bk" else root / "BK"
+    with pytest.raises(backup.BackupError, match="must not be on the iPod"):
+        backup_guard.check_destination(root, dest)
+
+
+def test_guard_ignores_unicode_form(tmp_path):
+    root = tmp_path / unicodedata.normalize("NFC", "Café")
+    (root / "iPod_Control").mkdir(parents=True)
+    with pytest.raises(backup.BackupError):
+        backup_guard.check_destination(root, tmp_path / unicodedata.normalize("NFD", "Café") / "bk")
+
+
+def test_guard_finds_the_ipod_when_root_is_a_subfolder(fake_ipod):
+    music = fake_ipod / "iPod_Control/Music"
+    with pytest.raises(backup.BackupError):
+        backup_guard.check_destination(music, fake_ipod / "bk4")
+    with pytest.raises(backup.BackupError):
+        backup_guard.check_destination(music, fake_ipod.parent)  # DEST contains the iPod
+
+
+def test_guard_refuses_the_ipods_disk_but_not_another(fake_ipod, tmp_path, monkeypatch):
+    monkeypatch.setattr(backup_guard, "_is_mount", lambda path: path == fake_ipod)
+    monkeypatch.setattr(backup_guard, "_device_of", lambda path: 7)
+    with pytest.raises(backup.BackupError, match="must not be on the iPod"):
+        backup_guard.check_destination(fake_ipod, tmp_path / "elsewhere" / "backup")
+    monkeypatch.setattr(backup_guard, "_device_of", lambda path: 7 if path == fake_ipod else 8)
+    backup_guard.check_destination(fake_ipod, tmp_path / "elsewhere" / "backup")
+
+
+def test_uppercase_music_folder_gives_no_duplicates(tmp_path):
+    root = tmp_path / "ipod"
+    for name, title in (("F00/S0.mp3", "One"), ("F01/S1.mp3", "Two")):
+        path = root / "IPOD_CONTROL/MUSIC" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(FIXTURES / "silence.mp3", path)
+        audio = mutagen.File(path, easy=True)
+        audio.update({"title": [title], "artist": ["A"], "album": ["B"]})
+        audio.save()
+    dest = tmp_path / "backup"
+    run(root, dest)
+    assert len(list(dest.rglob("*.mp3"))) == 2
+    assert not (dest / "Unreadable").exists()
+
+
+def test_playlist_lines_are_valid_for_odd_names(fake_ipod, tmp_path):
+    songs = [Song(title="line1\nline2", artist="#hash", album="a", path=str(next(fake_ipod.rglob("ABCD.mp3"))))]
+    dest = tmp_path / "backup"
+    _, present = backup.backup(songs, fake_ipod, dest)
+    m3u8.write_playlists(present, fake_ipod, dest, {})
+    lines = (dest / "My iPod.m3u8").read_text(encoding="utf-8").splitlines()
+    assert lines[1] == "#EXTINF:-1,#hash - line1 line2"
+    assert lines[2] == "./#hash/a/line1line2.mp3" or lines[2].startswith("./#hash/a/")
+    assert (dest / lines[2]).is_file()
+
+
+def test_playlist_uses_the_spelling_on_disk(fake_ipod, tmp_path):
+    music = fake_ipod / "iPod_Control/Music"
+    other = music / "F09/CASE.mp3"
+    other.parent.mkdir()
+    shutil.copy(music / "F00/ABCD.mp3", other)
+    audio = mutagen.File(other, easy=True)
+    audio.update({"title": ["Other"], "artist": ["the beatles"], "album": ["past masters"]})
+    audio.save()
+    dest = tmp_path / "backup"
+    songs = scan(fake_ipod)
+    backup.backup([s for s in songs if "ABCD" in s.path], fake_ipod, dest)
+    _, present = backup.backup(songs, fake_ipod, dest)
+    m3u8.write_playlists(present, fake_ipod, dest, {})
+    paths = [ln for ln in (dest / "My iPod.m3u8").read_text(encoding="utf-8").splitlines() if ln.startswith("./")]
+    for line in paths:  # every component is spelled exactly as listed on disk
+        folder = dest
+        for part in Path(line).parts:
+            assert part in os.listdir(folder)
+            folder = folder / part

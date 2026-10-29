@@ -2,7 +2,8 @@
 import os
 from pathlib import Path
 
-from ipod2playlist import backup, doctor, itunesdb, library, messages, playlist, review, spotify, youtube
+from ipod2playlist import backup, doctor, itunesdb, library, m3u8, messages, playlist, review, spotify, youtube
+from ipod2playlist.backup_guard import BackupError
 from ipod2playlist.progress import Progress
 from ipod2playlist.scan import scan
 from ipod2playlist.spotify import SpotifyService
@@ -127,8 +128,10 @@ def run_backup(args) -> None:
         songs = itunesdb.enrich(songs, args.root, tracks)
     try:
         result, present = backup.backup(songs, args.root, args.dest)
-    except backup.BackupError as error:
+    except BackupError as error:
         raise SystemExit(str(error))
-    count = backup.write_playlists(present, args.root, args.dest, playlists)
+    count = m3u8.write_playlists(present, args.root, args.dest, playlists)
     for line in backup.summary_lines(result, count, args.dest):
         print(line)
+    if result.failed:  # the playlists above cover what was copied; a re-run retries the rest
+        raise SystemExit(f"{result.failed} files could not be copied; run the same backup again to retry.")
